@@ -39,6 +39,33 @@ class ReportContext:
     unknown_artifacts: int
 
 
+@dataclass(slots=True)
+class RecentRunsContext:
+    source_label: str
+    total_runs: int
+    runs_with_artifacts: int
+    total_artifacts: int
+    runs_with_failures: int
+
+
+@dataclass(slots=True)
+class RecentRunInspection:
+    run_id: int
+    run_number: int | None
+    run_attempt: int | None
+    title: str
+    status: str
+    conclusion: str | None
+    html_url: str | None
+    created_at: str | None
+    total_artifacts: int
+    expired_artifacts: int
+    zip_artifacts: int
+    direct_file_artifacts: int
+    unknown_artifacts: int
+    strict_failures: list[str]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gh-artifact-inspector",
@@ -54,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--from-file",
         type=Path,
         help="Read a saved artifacts JSON payload instead of calling the GitHub API.",
+    )
+    parser.add_argument(
+        "--recent-runs",
+        type=int,
+        help="Inspect the most recent N workflow runs for a repository. Requires --repo and cannot be combined with --run-id, --run-url, or --from-file.",
     )
     parser.add_argument(
         "--github-token",
@@ -103,6 +135,20 @@ def read_payload(args: argparse.Namespace) -> dict[str, Any]:
     url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs/{run_id}/artifacts?per_page=100"
     headers = github_headers(args.github_token)
     return request_json(url, headers=headers)
+
+
+def resolve_recent_runs_target(args: argparse.Namespace) -> tuple[str, int]:
+    if args.recent_runs is None:
+        raise SystemExit("--recent-runs requires a positive integer.")
+    if args.recent_runs < 1:
+        raise SystemExit("--recent-runs must be at least 1.")
+    if args.from_file:
+        raise SystemExit("--recent-runs cannot be combined with --from-file.")
+    if args.run_id or args.run_url:
+        raise SystemExit("--recent-runs cannot be combined with --run-id or --run-url.")
+    if not args.repo:
+        raise SystemExit("--repo is required when --recent-runs is used.")
+    return args.repo, args.recent_runs
 
 
 def resolve_run_target(args: argparse.Namespace) -> tuple[str, int]:
@@ -169,6 +215,24 @@ def request_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
         raise SystemExit(f"GitHub API request failed ({exc.code}) for {url}\n{body}") from exc
     except URLError as exc:
         raise SystemExit(f"Network request failed for {url}: {exc.reason}") from exc
+
+
+def fetch_recent_runs(repo: str, limit: int, headers: dict[str, str]) -> list[dict[str, Any]]:
+    owner, repo_name = split_repo(repo)
+    runs: list[dict[str, Any]] = []
+    page = 1
+    while len(runs) < limit:
+        per_page = min(limit - len(runs), 100)
+        url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
+        payload = request_json(url, headers=headers)
+        page_runs = payload.get("workflow_runs", [])
+        if not isinstance(page_runs, list):
+            raise SystemExit(f"Unexpected workflow run payload for {repo}.")
+        runs.extend(page_runs)
+        if len(page_runs) < per_page:
+            break
+        page += 1
+    return runs[:limit]
 
 
 def probe_content_type(url: str | None, headers: dict[str, str]) -> str | None:
@@ -253,6 +317,46 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
         zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
         direct_file_artifacts=sum(1 for summary in summaries if summary.archive_kind == "direct-file"),
         unknown_artifacts=sum(1 for summary in summaries if summary.archive_kind == "unknown"),
+    )
+
+
+def inspect_recent_runs(repo: str, recent_runs: int, headers: dict[str, str], probe_download: bool) -> list[RecentRunInspection]:
+    inspections: list[RecentRunInspection] = []
+    for run in fetch_recent_runs(repo, recent_runs, headers):
+        run_id = int(run.get("id") or 0)
+        owner, repo_name = split_repo(repo)
+        artifacts_url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs/{run_id}/artifacts?per_page=100"
+        payload = request_json(artifacts_url, headers=headers)
+        summaries = summarize_payload(payload, headers=headers, probe_download=probe_download)
+        strict_failures = collect_strict_failures(summaries)
+        inspections.append(
+            RecentRunInspection(
+                run_id=run_id,
+                run_number=int(run["run_number"]) if run.get("run_number") is not None else None,
+                run_attempt=int(run["run_attempt"]) if run.get("run_attempt") is not None else None,
+                title=str(run.get("display_title") or run.get("name") or f"run {run_id}"),
+                status=str(run.get("status") or "unknown"),
+                conclusion=str(run.get("conclusion")) if run.get("conclusion") is not None else None,
+                html_url=str(run.get("html_url")) if run.get("html_url") is not None else None,
+                created_at=str(run.get("created_at")) if run.get("created_at") is not None else None,
+                total_artifacts=int(payload.get("total_count") or len(summaries)),
+                expired_artifacts=sum(1 for summary in summaries if summary.expired),
+                zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
+                direct_file_artifacts=sum(1 for summary in summaries if summary.archive_kind == "direct-file"),
+                unknown_artifacts=sum(1 for summary in summaries if summary.archive_kind == "unknown"),
+                strict_failures=strict_failures,
+            )
+        )
+    return inspections
+
+
+def build_recent_runs_context(repo: str, recent_runs: int, inspections: list[RecentRunInspection]) -> RecentRunsContext:
+    return RecentRunsContext(
+        source_label=f"recent GitHub Actions runs `{repo}` (limit {recent_runs})",
+        total_runs=len(inspections),
+        runs_with_artifacts=sum(1 for inspection in inspections if inspection.total_artifacts > 0),
+        total_artifacts=sum(inspection.total_artifacts for inspection in inspections),
+        runs_with_failures=sum(1 for inspection in inspections if inspection.strict_failures),
     )
 
 
@@ -365,6 +469,118 @@ def format_markdown_report(context: ReportContext, summaries: list[ArtifactSumma
     return "\n".join(lines)
 
 
+def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
+    rows = [
+        [
+            "run_id",
+            "run_number",
+            "status",
+            "conclusion",
+            "artifacts",
+            "zip",
+            "direct",
+            "expired",
+            "unknown",
+            "strict",
+            "title",
+        ]
+    ]
+    for inspection in inspections:
+        rows.append(
+            [
+                str(inspection.run_id),
+                str(inspection.run_number or "-"),
+                inspection.status,
+                inspection.conclusion or "-",
+                str(inspection.total_artifacts),
+                str(inspection.zip_artifacts),
+                str(inspection.direct_file_artifacts),
+                str(inspection.expired_artifacts),
+                str(inspection.unknown_artifacts),
+                str(len(inspection.strict_failures)),
+                inspection.title,
+            ]
+        )
+
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    lines: list[str] = []
+    for row_index, row in enumerate(rows):
+        padded = " | ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+        lines.append(padded)
+        if row_index == 0:
+            lines.append("-+-".join("-" * width for width in widths))
+    return "\n".join(lines)
+
+
+def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) -> str:
+    rows = [
+        [
+            "run_id",
+            "run_number",
+            "status",
+            "conclusion",
+            "artifacts",
+            "zip",
+            "direct",
+            "expired",
+            "unknown",
+            "strict",
+            "title",
+        ]
+    ]
+    for inspection in inspections:
+        rows.append(
+            [
+                str(inspection.run_id),
+                str(inspection.run_number or "-"),
+                inspection.status,
+                inspection.conclusion or "-",
+                str(inspection.total_artifacts),
+                str(inspection.zip_artifacts),
+                str(inspection.direct_file_artifacts),
+                str(inspection.expired_artifacts),
+                str(inspection.unknown_artifacts),
+                str(len(inspection.strict_failures)),
+                inspection.title,
+            ]
+        )
+
+    def escape(value: str) -> str:
+        return value.replace("|", "\\|").replace("\n", " ")
+
+    header = "| " + " | ".join(rows[0]) + " |"
+    divider = "| " + " | ".join("---" for _ in rows[0]) + " |"
+    body = ["| " + " | ".join(escape(value) for value in row) + " |" for row in rows[1:]]
+    return "\n".join([header, divider, *body])
+
+
+def collect_recent_runs_strict_failures(inspections: list[RecentRunInspection]) -> list[str]:
+    failures: list[str] = []
+    for inspection in inspections:
+        for failure in inspection.strict_failures:
+            failures.append(f"run {inspection.run_id} ({inspection.title}): {failure}")
+    return failures
+
+
+def format_recent_runs_markdown_report(context: RecentRunsContext, inspections: list[RecentRunInspection]) -> str:
+    lines = [
+        "# Recent artifact inspection report",
+        "",
+        f"- Source: {context.source_label}",
+        f"- Runs scanned: {context.total_runs}",
+        f"- Runs with artifacts: {context.runs_with_artifacts}",
+        f"- Total artifacts seen: {context.total_artifacts}",
+        f"- Runs with strict failures: {context.runs_with_failures}",
+        "",
+        format_recent_runs_markdown_table(inspections),
+    ]
+    failures = collect_recent_runs_strict_failures(inspections)
+    if failures:
+        lines.extend(["", "## Strict failures", ""])
+        lines.extend(f"- {failure}" for failure in failures)
+    return "\n".join(lines)
+
+
 def format_json_report(context: ReportContext, summaries: list[ArtifactSummary]) -> dict[str, Any]:
     return {
         "source": context.source_label,
@@ -377,6 +593,22 @@ def format_json_report(context: ReportContext, summaries: list[ArtifactSummary])
         },
         "strict_failures": collect_strict_failures(summaries),
         "artifacts": [asdict(summary) for summary in summaries],
+    }
+
+
+def format_recent_runs_json_report(
+    context: RecentRunsContext, inspections: list[RecentRunInspection]
+) -> dict[str, Any]:
+    return {
+        "source": context.source_label,
+        "summary": {
+            "total_runs": context.total_runs,
+            "runs_with_artifacts": context.runs_with_artifacts,
+            "total_artifacts": context.total_artifacts,
+            "runs_with_failures": context.runs_with_failures,
+        },
+        "strict_failures": collect_recent_runs_strict_failures(inspections),
+        "runs": [asdict(inspection) for inspection in inspections],
     }
 
 
@@ -396,8 +628,36 @@ def main(argv: list[str] | None = None) -> int:
     selected_formats = sum(bool(flag) for flag in (args.json, args.json_report, args.markdown, args.markdown_report))
     if selected_formats > 1:
         raise SystemExit("--json, --json-report, --markdown, and --markdown-report cannot be used together.")
-    payload = read_payload(args)
     headers = github_headers(args.github_token)
+
+    if args.recent_runs is not None:
+        repo, recent_runs = resolve_recent_runs_target(args)
+        inspections = inspect_recent_runs(repo, recent_runs, headers=headers, probe_download=args.probe_download)
+        context = build_recent_runs_context(repo, recent_runs, inspections)
+
+        if args.json:
+            json.dump([asdict(inspection) for inspection in inspections], sys.stdout, ensure_ascii=False, indent=2)
+            sys.stdout.write("\n")
+        elif args.json_report:
+            json.dump(format_recent_runs_json_report(context, inspections), sys.stdout, ensure_ascii=False, indent=2)
+            sys.stdout.write("\n")
+        elif args.markdown_report:
+            print(format_recent_runs_markdown_report(context, inspections))
+        elif args.markdown:
+            print(format_recent_runs_markdown_table(inspections))
+        else:
+            print(format_recent_runs_table(inspections))
+
+        if args.strict:
+            failures = collect_recent_runs_strict_failures(inspections)
+            if failures:
+                print("Strict check failed:", file=sys.stderr)
+                for failure in failures:
+                    print(f"- {failure}", file=sys.stderr)
+                return 2
+        return 0
+
+    payload = read_payload(args)
     summaries = summarize_payload(payload, headers=headers, probe_download=args.probe_download)
 
     if args.json:

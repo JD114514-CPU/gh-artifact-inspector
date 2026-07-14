@@ -19,6 +19,7 @@
 - 输出 `name / size / expired / archive_kind / content_type / download_strategy / note`
 - 支持终端表格输出、`--json`、`--json-report`、`--markdown` 和 `--markdown-report`
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
+- 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
 ## 为什么值得做
@@ -94,6 +95,14 @@ gh-artifact-inspector --repo owner/name --run-id 123456789 --probe-download --st
 - artifact 已过期
 - artifact 仍需要人工确认包装形式
 
+如果要先做仓库级巡检，看最近几次 workflow run 里有没有 artifact 过期、直出文件或包装不明：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 5 --json-report
+```
+
+它会逐个 run 拉取 artifact 列表，并输出每个 run 的 artifact 数量、zip/direct-file/unknown 分布，以及 strict 失败项。
+
 ## 输出示例
 
 ```text
@@ -145,5 +154,5 @@ uv run python -m pytest
 
 ## 下一步
 
-- 支持最近 N 次 run 的批量扫描
 - 增加一个“兼容下载器”示例脚本
+- 支持把 recent-runs 扫描结果按 workflow 名称聚合
