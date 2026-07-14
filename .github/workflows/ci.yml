@@ -39,3 +39,18 @@ jobs:
 
       - name: Smoke test CLI fixture output
         run: uv run python -m gh_artifact_inspector.cli --from-file tests/fixtures/artifacts.json --json
+
+      - name: Create direct-file artifact probe sample
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          printf 'gh-artifact-inspector direct-file probe sample\n' > workflow-artifact-demo.txt
+
+      - name: Upload direct-file artifact probe sample
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v7
+        with:
+          name: workflow-artifact-demo.txt
+          path: workflow-artifact-demo.txt
+          archive: false
+          retention-days: 7
