@@ -84,6 +84,10 @@ coverage-summary.json | 256  | no      | direct-file  | application/json | downl
 stale-artifact        | 512  | yes     | unknown      | -                | unavailable       | Artifact is expired. Re-run the workflow or extend retention.
 ```
 
+README 可直接渲染的终端截图素材：
+
+![gh-artifact-inspector demo](examples/demo-output.svg)
+
 真实跑出来的表格输出已保存到 [examples/demo-output.txt](examples/demo-output.txt)，可直接作为后续 README 截图或发布素材。
 Markdown 版本示例输出已保存到 [examples/demo-output.md](examples/demo-output.md)，方便直接复用到 GitHub 文本场景。
 Markdown 报告版本示例已保存到 [examples/demo-report.md](examples/demo-report.md)，方便直接贴进 issue、PR 或日报。
@@ -98,15 +102,22 @@ uv run python -m pytest
 
 - 示例输入：`tests/fixtures/artifacts.json`
 - 真实 demo 输出：`examples/demo-output.txt`
+- README 截图素材：`examples/demo-output.svg`
 - 许可证：`LICENSE`
 - 建议仓库 topics：`github-actions`、`artifacts`、`cli`、`devtools`、`workflow-debugging`
-- 建议首屏截图：直接用 `examples/demo-output.txt` 里的表格输出生成终端截图
+- 当前公开 release：`v0.1.0`
+
+## 当前公开状态
+
+- 仓库：`https://github.com/JD114514-CPU/gh-artifact-inspector`
+- release：`https://github.com/JD114514-CPU/gh-artifact-inspector/releases/tag/v0.1.0`
+- README 已包含可直接渲染的 CLI demo 截图素材
 
 ## 发布后建议
 
-- 发布一个 `v0.1.0` tag，把 README 里的示例输出做成截图
 - 在 README 里追加一个真实 workflow run 的演示链接
-- 如果后续要打到 PyPI，再补 `project.urls` 里的仓库和 issues 链接
+- 补一个 `--probe-download` 的联网示例，展示 direct-file artifact 的真实诊断
+- 如果后续要打到 PyPI，再补 `project.urls` 里的文档或 changelog 链接
 
 ## 下一步
 

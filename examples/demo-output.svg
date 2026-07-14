@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="310" viewBox="0 0 1260 310" role="img" aria-labelledby="title desc">
+  <title id="title">gh-artifact-inspector demo output</title>
+  <desc id="desc">Terminal-style preview of gh-artifact-inspector output for three sample artifacts.</desc>
+  <rect width="1260" height="310" rx="18" fill="#0b1220"/>
+  <rect x="18" y="18" width="1224" height="274" rx="14" fill="#111827" stroke="#233046"/>
+  <circle cx="44" cy="44" r="7" fill="#f87171"/>
+  <circle cx="68" cy="44" r="7" fill="#fbbf24"/>
+  <circle cx="92" cy="44" r="7" fill="#34d399"/>
+  <text x="118" y="49" fill="#cbd5e1" font-family="Consolas, 'Courier New', monospace" font-size="18">gh-artifact-inspector --from-file tests/fixtures/artifacts.json</text>
+  <g fill="#e5e7eb" font-family="Consolas, 'Courier New', monospace" font-size="16">
+    <text x="38" y="86">name                  | size | expired | archive_kind | content_type     | download_strategy  | note</text>
+    <text x="38" y="112">----------------------+------|---------+--------------+------------------+--------------------+------------------------------------------------------------------</text>
+    <text x="38" y="148">bundle.zip            | 1024 | no      | zip          | application/zip  | download-and-unzip | Treat the artifact as a zip archive before reading files.</text>
+    <text x="38" y="184">coverage-summary.json | 256  | no      | direct-file  | application/json | download-as-is     | Do not unzip automatically; consume the downloaded file directly.</text>
+    <text x="38" y="220">stale-artifact        | 512  | yes     | unknown      | -                | unavailable        | Artifact is expired. Re-run the workflow or extend retention.</text>
+  </g>
+</svg>
