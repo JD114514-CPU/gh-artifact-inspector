@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit a Markdown report with summary bullets plus the artifact table.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with code 2 when any artifact is expired or needs manual packaging checks.",
+    )
     return parser
 
 
@@ -355,6 +360,16 @@ def format_markdown_report(context: ReportContext, summaries: list[ArtifactSumma
     return "\n".join(lines)
 
 
+def collect_strict_failures(summaries: list[ArtifactSummary]) -> list[str]:
+    failures: list[str] = []
+    for summary in summaries:
+        if summary.expired:
+            failures.append(f"{summary.name or '<unnamed>'}: artifact expired")
+        elif summary.download_strategy == "manual-check":
+            failures.append(f"{summary.name or '<unnamed>'}: packaging requires manual check")
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -375,6 +390,14 @@ def main(argv: list[str] | None = None) -> int:
         print(format_markdown_table(summaries))
     else:
         print(format_table(summaries))
+
+    if args.strict:
+        failures = collect_strict_failures(summaries)
+        if failures:
+            print("Strict check failed:", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 2
     return 0
 
 

@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gh_artifact_inspector.cli import (
     build_report_context,
+    collect_strict_failures,
     format_markdown_table,
     format_markdown_report,
     parse_run_url,
@@ -272,6 +273,15 @@ def test_format_markdown_report_includes_summary_and_table():
     assert "| coverage-summary.json | 256 | no | direct-file | application/json | download-as-is |" in report
 
 
+def test_collect_strict_failures_reports_expired_and_unknown():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+
+    failures = collect_strict_failures(summaries)
+
+    assert failures == ["stale-artifact: artifact expired"]
+
+
 def test_cli_emits_markdown_report_from_fixture():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -295,3 +305,75 @@ def test_cli_emits_markdown_report_from_fixture():
     assert "# Artifact inspection report" in output
     assert f"- Source: saved payload `{FIXTURE}`" in output
     assert "| stale-artifact | 512 | yes | unknown | - | unavailable |" in output
+
+
+def test_cli_strict_fails_when_fixture_contains_expired_artifact():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--strict",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert completed.returncode == 2
+    assert "Strict check failed:" in completed.stderr
+    assert "- stale-artifact: artifact expired" in completed.stderr
+
+
+def test_cli_strict_succeeds_for_known_non_expired_artifacts(tmp_path: Path):
+    payload_path = tmp_path / "artifacts.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "total_count": 2,
+                "artifacts": [
+                    {
+                        "name": "bundle.zip",
+                        "size_in_bytes": 100,
+                        "expired": False,
+                        "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip",
+                        "content_type": "application/zip",
+                    },
+                    {
+                        "name": "summary.json",
+                        "size_in_bytes": 200,
+                        "expired": False,
+                        "archive_download_url": "https://example.invalid/summary.json",
+                        "content_type": "application/json",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(payload_path),
+            "--strict",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert completed.returncode == 0
+    assert "bundle.zip" in completed.stdout
+    assert completed.stderr == ""

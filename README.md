@@ -17,7 +17,8 @@
 - 读取 GitHub Actions `run_id` 的 artifact 列表
 - 支持直接读取离线 JSON payload，方便复盘或写测试
 - 输出 `name / size / expired / archive_kind / content_type / download_strategy / note`
-- 支持终端表格输出、`--json` 和 `--markdown`
+- 支持终端表格输出、`--json`、`--markdown` 和 `--markdown-report`
+- 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
 ## 为什么值得做
@@ -75,6 +76,17 @@ gh-artifact-inspector --from-file tests/fixtures/artifacts.json --markdown
 ```bash
 gh-artifact-inspector --from-file tests/fixtures/artifacts.json --markdown-report
 ```
+
+如果要把它接进 CI 或 agent 流程，遇到过期 artifact 或无法自动判断包装形式时直接失败：
+
+```bash
+gh-artifact-inspector --repo owner/name --run-id 123456789 --probe-download --strict
+```
+
+`--strict` 会保持正常输出，但在以下场景返回退出码 `2`：
+
+- artifact 已过期
+- artifact 仍需要人工确认包装形式
 
 ## 输出示例
 
