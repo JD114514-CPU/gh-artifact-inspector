@@ -1,5 +1,7 @@
 # gh-artifact-inspector
 
+[![CI](https://github.com/JD114514-CPU/gh-artifact-inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/JD114514-CPU/gh-artifact-inspector/actions/workflows/ci.yml)
+
 一个面向 GitHub Actions artifact 的小型诊断 CLI，目标是尽快回答一个常见问题：
 
 “这个 artifact 到底该直接消费，还是应该先当 zip 解压？”
@@ -111,6 +113,7 @@ uv run python -m pytest
 
 - 仓库：`https://github.com/JD114514-CPU/gh-artifact-inspector`
 - release：`https://github.com/JD114514-CPU/gh-artifact-inspector/releases/tag/v0.1.0`
+- CI：`https://github.com/JD114514-CPU/gh-artifact-inspector/actions/workflows/ci.yml`
 - README 已包含可直接渲染的 CLI demo 截图素材
 
 ## 发布后建议
