@@ -18,6 +18,7 @@
 - 支持直接读取离线 JSON payload，方便复盘或写测试
 - 输出 `name / size / expired / archive_kind / content_type / download_strategy / note`
 - 支持终端表格输出、`--json`、`--json-report`、`--markdown` 和 `--markdown-report`
+- 支持直接从主 CLI 导出 `powershell` / `bash` 下载脚本，不必先手动中转 JSON
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - `--recent-runs` 的 JSON / Markdown 报告会额外按 workflow 名称聚合，方便看哪条流水线最常出问题
@@ -84,6 +85,15 @@ gh-artifact-inspector --from-file tests/fixtures/artifacts.json --json-report
 ```bash
 gh-artifact-inspector --from-file tests/fixtures/artifacts.json --markdown-report
 ```
+
+如果你已经确认诊断逻辑没问题，想直接把下载计划导出成可编辑脚本：
+
+```bash
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --emit-script powershell --output-dir downloaded-artifacts
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --emit-script bash --output-dir downloaded-artifacts
+```
+
+这样可以少一次 `--json-report > report.json` 的中转，更适合临时排障或 agent 直接拼装后续步骤。
 
 如果要把它接进 CI 或 agent 流程，遇到过期 artifact 或无法自动判断包装形式时直接失败：
 
@@ -183,7 +193,7 @@ python examples/compatible_downloader.py --report examples/demo-report.json --ou
 
 这样可以把诊断结果继续接到后续脚本、agent 或一次性的排障流程里，而不用手工判断每个 artifact 是否该 unzip。
 
-如果你已经确认报告没问题，只是想把下载计划导出给 PowerShell 或 bash 执行：
+如果你已经确认报告没问题，只是想在单独脚本里真正执行下载计划：
 
 ```bash
 python examples/compatible_downloader.py --report examples/demo-report.json --output-dir downloaded-artifacts --emit-script powershell

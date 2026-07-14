@@ -11,6 +11,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
+from gh_artifact_inspector.downloader import build_download_actions, render_download_script
+
 
 class NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
@@ -128,6 +130,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--markdown-report",
         action="store_true",
         help="Emit a Markdown report with summary bullets plus the artifact table.",
+    )
+    parser.add_argument(
+        "--emit-script",
+        choices=("powershell", "bash"),
+        help="Emit a download script for the inspected artifacts instead of a table/report. Requires --output-dir and cannot be combined with --recent-runs.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Target directory to bake into --emit-script output.",
     )
     parser.add_argument(
         "--strict",
@@ -717,12 +729,22 @@ def collect_strict_failures(summaries: list[ArtifactSummary]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    selected_formats = sum(bool(flag) for flag in (args.json, args.json_report, args.markdown, args.markdown_report))
+    selected_formats = sum(
+        bool(flag) for flag in (args.json, args.json_report, args.markdown, args.markdown_report, args.emit_script)
+    )
     if selected_formats > 1:
-        raise SystemExit("--json, --json-report, --markdown, and --markdown-report cannot be used together.")
+        raise SystemExit(
+            "--json, --json-report, --markdown, --markdown-report, and --emit-script cannot be used together."
+        )
+    if args.emit_script and not args.output_dir:
+        raise SystemExit("--output-dir is required when --emit-script is used.")
+    if args.output_dir and not args.emit_script:
+        raise SystemExit("--output-dir can only be used together with --emit-script.")
     headers = github_headers(args.github_token)
 
     if args.recent_runs is not None:
+        if args.emit_script:
+            raise SystemExit("--emit-script cannot be combined with --recent-runs.")
         repo, recent_runs = resolve_recent_runs_target(args)
         inspections = inspect_recent_runs(repo, recent_runs, headers=headers, probe_download=args.probe_download)
         context = build_recent_runs_context(repo, recent_runs, inspections)
@@ -752,7 +774,13 @@ def main(argv: list[str] | None = None) -> int:
     payload = read_payload(args)
     summaries = summarize_payload(payload, headers=headers, probe_download=args.probe_download)
 
-    if args.json:
+    if args.emit_script:
+        assert args.output_dir is not None
+        context = build_report_context(args, payload, summaries)
+        report = format_json_report(context, summaries)
+        actions = build_download_actions(report, args.output_dir)
+        print(render_download_script(actions, shell=args.emit_script), end="")
+    elif args.json:
         json.dump([asdict(summary) for summary in summaries], sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
     elif args.json_report:

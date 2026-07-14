@@ -463,6 +463,57 @@ def test_cli_strict_succeeds_for_known_non_expired_artifacts(tmp_path: Path):
     assert completed.stderr == ""
 
 
+def test_cli_emit_script_requires_output_dir():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--emit-script",
+            "powershell",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert completed.returncode != 0
+    assert "--output-dir is required when --emit-script is used." in completed.stderr
+
+
+def test_cli_emits_powershell_script_from_fixture(tmp_path: Path):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--emit-script",
+            "powershell",
+            "--output-dir",
+            str(tmp_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert "$ErrorActionPreference = 'Stop'" in completed.stdout
+    assert "Invoke-WebRequest -Headers $headers" in completed.stdout
+    assert f"Expand-Archive -LiteralPath '{tmp_path / 'bundle.zip'}'" in completed.stdout
+    assert "# skip stale-artifact: Artifact is expired." in completed.stdout
+
+
 def test_inspect_recent_runs_summarizes_each_run(monkeypatch: pytest.MonkeyPatch):
     responses = {
         "https://api.github.com/repos/example/project/actions/runs?per_page=2&page=1": {
