@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -17,6 +18,7 @@ from gh_artifact_inspector.cli import (
     format_markdown_table,
     format_markdown_report,
     parse_run_url,
+    probe_content_type,
     resolve_run_target,
     summarize_artifact,
     summarize_payload,
@@ -50,6 +52,114 @@ def test_summarize_artifact_detects_zip_and_direct_file():
     assert zip_summary.download_strategy == "download-and-unzip"
     assert direct_summary.archive_kind == "direct-file"
     assert direct_summary.download_strategy == "download-as-is"
+
+
+def test_summarize_artifact_detects_direct_file_when_download_url_ends_with_zip_path():
+    summary = summarize_artifact(
+        {
+            "name": "workflow-artifact-demo.txt",
+            "size_in_bytes": 47,
+            "expired": False,
+            "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip",
+        },
+        content_type="text/plain",
+    )
+
+    assert summary.archive_kind == "direct-file"
+    assert summary.download_strategy == "download-as-is"
+
+
+def test_probe_content_type_falls_back_to_get_when_head_has_no_type(monkeypatch: pytest.MonkeyPatch):
+    calls: list[str] = []
+
+    class DummyHeaders:
+        def __init__(self, content_type: str | None) -> None:
+            self._content_type = content_type
+
+        def get_content_type(self) -> str | None:
+            return self._content_type
+
+    class DummyResponse:
+        def __init__(self, content_type: str | None) -> None:
+            self.headers = DummyHeaders(content_type)
+
+        def __enter__(self) -> "DummyResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class DummyOpener:
+        def open(self, request, timeout=30):  # type: ignore[no-untyped-def]
+            calls.append(request.get_method())
+            if request.get_method() == "HEAD":
+                return DummyResponse(None)
+            return DummyResponse("text/plain")
+
+    def fake_build_opener(*handlers):  # type: ignore[no-untyped-def]
+        return DummyOpener()
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.build_opener", fake_build_opener)
+
+    content_type = probe_content_type("https://example.invalid/artifact", headers={})
+
+    assert content_type == "text/plain"
+    assert calls == ["HEAD", "GET"]
+
+
+def test_probe_content_type_follows_redirect_without_auth(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[str, str]] = []
+
+    class DummyHeaders:
+        def __init__(self, content_type: str | None = None, location: str | None = None) -> None:
+            self._content_type = content_type
+            self._location = location
+
+        def get_content_type(self) -> str | None:
+            return self._content_type
+
+        def get(self, key: str, default=None):  # type: ignore[no-untyped-def]
+            if key == "Location":
+                return self._location
+            return default
+
+    class DummyResponse:
+        def __init__(self, content_type: str | None) -> None:
+            self.headers = DummyHeaders(content_type=content_type)
+
+        def __enter__(self) -> "DummyResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class DummyOpener:
+        def open(self, request, timeout=30):  # type: ignore[no-untyped-def]
+            calls.append(("opener", request.get_method()))
+            raise HTTPError(
+                request.full_url,
+                302,
+                "Found",
+                DummyHeaders(location="https://downloads.example.invalid/artifact.txt"),
+                None,
+            )
+
+    def fake_build_opener(*handlers):  # type: ignore[no-untyped-def]
+        return DummyOpener()
+
+    def fake_urlopen(request, timeout=30):  # type: ignore[no-untyped-def]
+        calls.append(("urlopen", request.get_method()))
+        assert request.full_url == "https://downloads.example.invalid/artifact.txt"
+        assert request.headers.get("Authorization") is None
+        return DummyResponse("text/plain")
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.build_opener", fake_build_opener)
+    monkeypatch.setattr("gh_artifact_inspector.cli.urlopen", fake_urlopen)
+
+    content_type = probe_content_type("https://example.invalid/artifact", headers={"Authorization": "Bearer secret"})
+
+    assert content_type == "text/plain"
+    assert calls == [("opener", "HEAD"), ("urlopen", "HEAD")]
 
 
 def test_cli_emits_json_from_fixture():

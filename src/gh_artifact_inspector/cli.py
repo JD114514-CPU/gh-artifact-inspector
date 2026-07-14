@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+
+
+class NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
 
 
 @dataclass(slots=True)
@@ -159,12 +164,37 @@ def request_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
 def probe_content_type(url: str | None, headers: dict[str, str]) -> str | None:
     if not url:
         return None
-    request = Request(url, headers=headers, method="HEAD")
-    try:
-        with urlopen(request, timeout=30) as response:
-            return response.headers.get_content_type()
-    except Exception:
-        return None
+    methods: tuple[tuple[str, dict[str, str]], ...] = (
+        ("HEAD", headers),
+        ("GET", {**headers, "Range": "bytes=0-0"}),
+    )
+    for method, request_headers in methods:
+        request = Request(url, headers=request_headers, method=method)
+        try:
+            opener = build_opener(NoRedirectHandler())
+            with opener.open(request, timeout=30) as response:
+                content_type = response.headers.get_content_type()
+                if content_type:
+                    return content_type
+        except HTTPError as exc:
+            location = exc.headers.get("Location")
+            if location:
+                redirected_headers = {
+                    "User-Agent": headers.get("User-Agent", "gh-artifact-inspector"),
+                }
+                if method == "GET":
+                    redirected_headers["Range"] = "bytes=0-0"
+                redirected_request = Request(location, headers=redirected_headers, method=method)
+                try:
+                    with urlopen(redirected_request, timeout=30) as response:
+                        content_type = response.headers.get_content_type()
+                        if content_type:
+                            return content_type
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return None
 
 
 def summarize_payload(payload: dict[str, Any], headers: dict[str, str], probe_download: bool) -> list[ArtifactSummary]:

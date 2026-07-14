@@ -93,7 +93,7 @@ README 可直接渲染的终端截图素材：
 真实跑出来的表格输出已保存到 [examples/demo-output.txt](examples/demo-output.txt)，可直接作为后续 README 截图或发布素材。
 Markdown 版本示例输出已保存到 [examples/demo-output.md](examples/demo-output.md)，方便直接复用到 GitHub 文本场景。
 Markdown 报告版本示例已保存到 [examples/demo-report.md](examples/demo-report.md)，方便直接贴进 issue、PR 或日报。
-真实联网 `--probe-download` 示例将保存到 `examples/live-probe-report.md`，用于展示 direct-file artifact 的真实诊断。
+真实联网 `--probe-download` 示例已保存到 [examples/live-probe-report.md](examples/live-probe-report.md)，用于展示 direct-file artifact 的真实诊断。
 
 ## 本地验证
 
@@ -116,11 +116,11 @@ uv run python -m pytest
 - 仓库：`https://github.com/JD114514-CPU/gh-artifact-inspector`
 - release：`https://github.com/JD114514-CPU/gh-artifact-inspector/releases/tag/v0.1.0`
 - CI：`https://github.com/JD114514-CPU/gh-artifact-inspector/actions/workflows/ci.yml`
+- 真实 probe run：`https://github.com/JD114514-CPU/gh-artifact-inspector/actions/runs/29322701009`
 - README 已包含可直接渲染的 CLI demo 截图素材
 
 ## 发布后建议
 
-- 在 README 里追加一个真实 workflow run 的演示链接
 - 如果后续要打到 PyPI，再补 `project.urls` 里的文档或 changelog 链接
 
 ## 下一步
