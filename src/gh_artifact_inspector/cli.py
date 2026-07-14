@@ -71,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit structured JSON instead of a table.",
     )
     parser.add_argument(
+        "--json-report",
+        action="store_true",
+        help="Emit a structured report with source, summary counts, strict failures, and artifact details.",
+    )
+    parser.add_argument(
         "--markdown",
         action="store_true",
         help="Emit a Markdown table for issue comments, PRs, or reports.",
@@ -360,6 +365,21 @@ def format_markdown_report(context: ReportContext, summaries: list[ArtifactSumma
     return "\n".join(lines)
 
 
+def format_json_report(context: ReportContext, summaries: list[ArtifactSummary]) -> dict[str, Any]:
+    return {
+        "source": context.source_label,
+        "summary": {
+            "total_artifacts": context.total_artifacts,
+            "expired_artifacts": context.expired_artifacts,
+            "zip_artifacts": context.zip_artifacts,
+            "direct_file_artifacts": context.direct_file_artifacts,
+            "unknown_artifacts": context.unknown_artifacts,
+        },
+        "strict_failures": collect_strict_failures(summaries),
+        "artifacts": [asdict(summary) for summary in summaries],
+    }
+
+
 def collect_strict_failures(summaries: list[ArtifactSummary]) -> list[str]:
     failures: list[str] = []
     for summary in summaries:
@@ -373,15 +393,19 @@ def collect_strict_failures(summaries: list[ArtifactSummary]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    selected_formats = sum(bool(flag) for flag in (args.json, args.markdown, args.markdown_report))
+    selected_formats = sum(bool(flag) for flag in (args.json, args.json_report, args.markdown, args.markdown_report))
     if selected_formats > 1:
-        raise SystemExit("--json, --markdown, and --markdown-report cannot be used together.")
+        raise SystemExit("--json, --json-report, --markdown, and --markdown-report cannot be used together.")
     payload = read_payload(args)
     headers = github_headers(args.github_token)
     summaries = summarize_payload(payload, headers=headers, probe_download=args.probe_download)
 
     if args.json:
         json.dump([asdict(summary) for summary in summaries], sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+    elif args.json_report:
+        context = build_report_context(args, payload, summaries)
+        json.dump(format_json_report(context, summaries), sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
     elif args.markdown_report:
         context = build_report_context(args, payload, summaries)

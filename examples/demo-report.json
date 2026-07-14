@@ -1,0 +1,45 @@
+{
+  "source": "saved payload `tests\\fixtures\\artifacts.json`",
+  "summary": {
+    "total_artifacts": 3,
+    "expired_artifacts": 1,
+    "zip_artifacts": 1,
+    "direct_file_artifacts": 1,
+    "unknown_artifacts": 1
+  },
+  "strict_failures": [
+    "stale-artifact: artifact expired"
+  ],
+  "artifacts": [
+    {
+      "name": "bundle.zip",
+      "size_in_bytes": 1024,
+      "expired": false,
+      "archive_kind": "zip",
+      "content_type": "application/zip",
+      "download_strategy": "download-and-unzip",
+      "note": "Treat the artifact as a zip archive before reading files.",
+      "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip"
+    },
+    {
+      "name": "coverage-summary.json",
+      "size_in_bytes": 256,
+      "expired": false,
+      "archive_kind": "direct-file",
+      "content_type": "application/json",
+      "download_strategy": "download-as-is",
+      "note": "Do not unzip automatically; consume the downloaded file directly.",
+      "archive_download_url": "https://example.invalid/artifacts/coverage-summary.json"
+    },
+    {
+      "name": "stale-artifact",
+      "size_in_bytes": 512,
+      "expired": true,
+      "archive_kind": "unknown",
+      "content_type": null,
+      "download_strategy": "unavailable",
+      "note": "Artifact is expired. Re-run the workflow or extend retention.",
+      "archive_download_url": "https://example.invalid/artifacts/stale-artifact"
+    }
+  ]
+}

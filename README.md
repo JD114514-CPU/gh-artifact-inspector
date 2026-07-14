@@ -17,7 +17,7 @@
 - 读取 GitHub Actions `run_id` 的 artifact 列表
 - 支持直接读取离线 JSON payload，方便复盘或写测试
 - 输出 `name / size / expired / archive_kind / content_type / download_strategy / note`
-- 支持终端表格输出、`--json`、`--markdown` 和 `--markdown-report`
+- 支持终端表格输出、`--json`、`--json-report`、`--markdown` 和 `--markdown-report`
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
@@ -71,6 +71,12 @@ gh-artifact-inspector --repo owner/name --run-id 123456789 --probe-download --js
 gh-artifact-inspector --from-file tests/fixtures/artifacts.json --markdown
 ```
 
+如果 agent、脚本或 CI 需要同时拿到汇总结论和明细列表：
+
+```bash
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --json-report
+```
+
 如果想直接生成一段更完整的 Markdown 报告，包含来源和汇总要点：
 
 ```bash
@@ -105,6 +111,7 @@ README 可直接渲染的终端截图素材：
 真实跑出来的表格输出已保存到 [examples/demo-output.txt](examples/demo-output.txt)，可直接作为后续 README 截图或发布素材。
 Markdown 版本示例输出已保存到 [examples/demo-output.md](examples/demo-output.md)，方便直接复用到 GitHub 文本场景。
 Markdown 报告版本示例已保存到 [examples/demo-report.md](examples/demo-report.md)，方便直接贴进 issue、PR 或日报。
+JSON 报告版本示例已保存到 [examples/demo-report.json](examples/demo-report.json)，方便直接给 agent、脚本或 CI 消费。
 真实联网 `--probe-download` 示例已保存到 [examples/live-probe-report.md](examples/live-probe-report.md)，用于展示 direct-file artifact 的真实诊断。
 
 ## 本地验证
@@ -118,6 +125,7 @@ uv run python -m pytest
 - 示例输入：`tests/fixtures/artifacts.json`
 - 真实 demo 输出：`examples/demo-output.txt`
 - README 截图素材：`examples/demo-output.svg`
+- JSON 报告示例：`examples/demo-report.json`
 - 真实联网 probe 示例：`examples/live-probe-report.md`
 - 许可证：`LICENSE`
 - 建议仓库 topics：`github-actions`、`artifacts`、`cli`、`devtools`、`workflow-debugging`

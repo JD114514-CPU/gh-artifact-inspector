@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from gh_artifact_inspector.cli import (
     build_report_context,
     collect_strict_failures,
+    format_json_report,
     format_markdown_table,
     format_markdown_report,
     parse_run_url,
@@ -273,6 +274,37 @@ def test_format_markdown_report_includes_summary_and_table():
     assert "| coverage-summary.json | 256 | no | direct-file | application/json | download-as-is |" in report
 
 
+def test_format_json_report_includes_summary_and_artifacts():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=123456789,
+        run_url=None,
+        from_file=None,
+        github_token=None,
+        probe_download=False,
+        json=False,
+        json_report=True,
+        markdown=False,
+        markdown_report=False,
+    )
+
+    report = format_json_report(build_report_context(args, payload, summaries), summaries)
+
+    assert report["source"] == "GitHub Actions run `example/project` / `123456789`"
+    assert report["summary"] == {
+        "total_artifacts": 3,
+        "expired_artifacts": 1,
+        "zip_artifacts": 1,
+        "direct_file_artifacts": 1,
+        "unknown_artifacts": 1,
+    }
+    assert report["strict_failures"] == ["stale-artifact: artifact expired"]
+    assert report["artifacts"][1]["name"] == "coverage-summary.json"
+    assert report["artifacts"][1]["download_strategy"] == "download-as-is"
+
+
 def test_collect_strict_failures_reports_expired_and_unknown():
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     summaries = summarize_payload(payload, headers={}, probe_download=False)
@@ -305,6 +337,32 @@ def test_cli_emits_markdown_report_from_fixture():
     assert "# Artifact inspection report" in output
     assert f"- Source: saved payload `{FIXTURE}`" in output
     assert "| stale-artifact | 512 | yes | unknown | - | unavailable |" in output
+
+
+def test_cli_emits_json_report_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--json-report",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["source"] == f"saved payload `{FIXTURE}`"
+    assert payload["summary"]["expired_artifacts"] == 1
+    assert payload["strict_failures"] == ["stale-artifact: artifact expired"]
+    assert payload["artifacts"][0]["name"] == "bundle.zip"
 
 
 def test_cli_strict_fails_when_fixture_contains_expired_artifact():
