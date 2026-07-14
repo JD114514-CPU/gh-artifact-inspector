@@ -32,6 +32,11 @@ from gh_artifact_inspector.cli import (
     summarize_artifact,
     summarize_payload,
 )
+from gh_artifact_inspector.downloader import (
+    build_download_actions,
+    describe_download_actions,
+    sanitize_artifact_name,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "artifacts.json"
@@ -739,3 +744,63 @@ def test_recent_runs_markdown_report_includes_workflow_summary_section():
 
     assert "## Workflow summary" in report
     assert "| CI | 2 | 3 | 1 | 1 | 1 | 1 | 1 |" in report
+
+
+def test_build_download_actions_uses_report_strategies(tmp_path: Path):
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=123456789,
+        run_url=None,
+        from_file=None,
+        github_token=None,
+        probe_download=False,
+        json=False,
+        json_report=True,
+        markdown=False,
+        markdown_report=False,
+    )
+    report = format_json_report(build_report_context(args, payload, summaries), summaries)
+
+    actions = build_download_actions(report, tmp_path)
+
+    assert [(action.name, action.strategy) for action in actions] == [
+        ("bundle.zip", "download-and-unzip"),
+        ("coverage-summary.json", "download-as-is"),
+        ("stale-artifact", "unavailable"),
+    ]
+    assert actions[0].target_path == tmp_path / "bundle.zip"
+    assert actions[0].extract_dir == tmp_path / "bundle"
+    assert actions[1].target_path == tmp_path / "coverage-summary.json"
+    assert actions[2].target_path is None
+
+
+def test_sanitize_artifact_name_replaces_windows_unsafe_characters():
+    assert sanitize_artifact_name('bad:name/with\\chars?.zip') == "bad_name_with_chars_.zip"
+
+
+def test_describe_download_actions_marks_downloads_and_skips(tmp_path: Path):
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=123456789,
+        run_url=None,
+        from_file=None,
+        github_token=None,
+        probe_download=False,
+        json=False,
+        json_report=True,
+        markdown=False,
+        markdown_report=False,
+    )
+    report = format_json_report(build_report_context(args, payload, summaries), summaries)
+
+    logs = describe_download_actions(build_download_actions(report, tmp_path))
+
+    assert logs == [
+        f"plan unzip bundle.zip: {tmp_path / 'bundle.zip'} -> {tmp_path / 'bundle'}",
+        f"plan download coverage-summary.json: {tmp_path / 'coverage-summary.json'}",
+        "skip stale-artifact: Artifact is expired. Re-run the workflow or extend retention.",
+    ]

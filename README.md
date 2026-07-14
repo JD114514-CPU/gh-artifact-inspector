@@ -155,4 +155,30 @@ uv run python -m pytest
 
 ## 下一步
 
-- 增加一个“兼容下载器”示例脚本
+- 支持把下载计划直接导出成 PowerShell / bash 脚本
+
+## 兼容下载器示例
+
+如果你已经用 `--json-report` 拿到了结构化报告，可以直接用仓库里的示例脚本按推荐策略下载：
+
+```bash
+gh-artifact-inspector --repo owner/name --run-id 123456789 --json-report > report.json
+set GITHUB_TOKEN=your_token_here
+python examples/compatible_downloader.py --report report.json --output-dir downloaded-artifacts
+```
+
+注意：GitHub Actions artifact 下载 URL 通常需要认证，即使仓库本身是公开的；因此真实下载场景建议显式提供 `GITHUB_TOKEN`。
+
+这个脚本会按 `download_strategy` 自动区分三类动作：
+
+- `download-and-unzip`：下载 zip，并解压到同名目录
+- `download-as-is`：直接按原文件名保存
+- `manual-check` / `unavailable`：跳过，并打印原因
+
+如果只想先确认会做哪些动作，不想立刻访问 GitHub API：
+
+```bash
+python examples/compatible_downloader.py --report examples/demo-report.json --output-dir downloaded-artifacts --dry-run
+```
+
+这样可以把诊断结果继续接到后续脚本、agent 或一次性的排障流程里，而不用手工判断每个 artifact 是否该 unzip。
