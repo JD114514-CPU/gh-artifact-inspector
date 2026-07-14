@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gh-artifact-inspector"
+version = "0.1.0"
+description = "Inspect GitHub Actions artifacts and suggest safe download handling."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "JD114514-CPU" }
+]
+keywords = ["github-actions", "artifacts", "cli", "workflow", "debugging"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pytest>=9,<10",
+]
+
+[project.scripts]
+gh-artifact-inspector = "gh_artifact_inspector.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/JD114514-CPU/gh-artifact-inspector"
+Repository = "https://github.com/JD114514-CPU/gh-artifact-inspector"
+Issues = "https://github.com/JD114514-CPU/gh-artifact-inspector/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

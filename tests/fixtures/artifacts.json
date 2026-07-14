@@ -1,0 +1,25 @@
+{
+  "total_count": 3,
+  "artifacts": [
+    {
+      "name": "bundle.zip",
+      "size_in_bytes": 1024,
+      "expired": false,
+      "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip",
+      "content_type": "application/zip"
+    },
+    {
+      "name": "coverage-summary.json",
+      "size_in_bytes": 256,
+      "expired": false,
+      "archive_download_url": "https://example.invalid/artifacts/coverage-summary.json",
+      "content_type": "application/json"
+    },
+    {
+      "name": "stale-artifact",
+      "size_in_bytes": 512,
+      "expired": true,
+      "archive_download_url": "https://example.invalid/artifacts/stale-artifact"
+    }
+  ]
+}
