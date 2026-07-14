@@ -22,6 +22,7 @@
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - `--recent-runs` 的 JSON / Markdown 报告会额外按 workflow 名称聚合，方便看哪条流水线最常出问题
+- 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
 ## 为什么值得做

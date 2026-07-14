@@ -84,6 +84,21 @@ def test_summarize_artifact_detects_direct_file_when_download_url_ends_with_zip_
     assert summary.download_strategy == "download-as-is"
 
 
+def test_summarize_artifact_treats_tarball_payloads_as_direct_file_downloads():
+    summary = summarize_artifact(
+        {
+            "name": "logs-bundle.tar.gz",
+            "size_in_bytes": 4096,
+            "expired": False,
+            "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip",
+        },
+        content_type="application/gzip",
+    )
+
+    assert summary.archive_kind == "direct-file"
+    assert summary.download_strategy == "download-as-is"
+
+
 def test_probe_content_type_falls_back_to_get_when_head_has_no_type(monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []
 

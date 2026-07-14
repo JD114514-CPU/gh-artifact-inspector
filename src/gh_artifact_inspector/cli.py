@@ -388,9 +388,22 @@ def infer_archive_kind(name: str, content_type: str | None, archive_download_url
     normalized_name = name.lower()
     normalized_type = (content_type or "").lower()
     normalized_url = (archive_download_url or "").lower()
+    zip_content_types = {"application/zip", "application/x-zip-compressed"}
+    packaged_file_suffixes = (".tar.gz", ".tgz", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar")
+    packaged_file_types = {
+        "application/gzip",
+        "application/x-gzip",
+        "application/x-tar",
+        "application/x-bzip2",
+        "application/x-xz",
+        "application/x-7z-compressed",
+        "application/vnd.rar",
+    }
 
-    if "zip" in normalized_type or normalized_name.endswith(".zip"):
+    if normalized_name.endswith(".zip") or normalized_type in zip_content_types or normalized_type.endswith("+zip"):
         return "zip"
+    if normalized_name.endswith(packaged_file_suffixes) or normalized_type in packaged_file_types:
+        return "direct-file"
     if normalized_type in {"application/octet-stream", "text/plain"} and ".zip" not in normalized_url:
         return "direct-file"
     if normalized_type.startswith("text/") or normalized_type in {"application/json", "application/xml"}:
