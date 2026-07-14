@@ -35,6 +35,7 @@ from gh_artifact_inspector.cli import (
 from gh_artifact_inspector.downloader import (
     build_download_actions,
     describe_download_actions,
+    render_download_script,
     sanitize_artifact_name,
 )
 
@@ -804,3 +805,82 @@ def test_describe_download_actions_marks_downloads_and_skips(tmp_path: Path):
         f"plan download coverage-summary.json: {tmp_path / 'coverage-summary.json'}",
         "skip stale-artifact: Artifact is expired. Re-run the workflow or extend retention.",
     ]
+
+
+def test_render_download_script_supports_powershell_and_bash(tmp_path: Path):
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=123456789,
+        run_url=None,
+        from_file=None,
+        github_token=None,
+        probe_download=False,
+        json=False,
+        json_report=True,
+        markdown=False,
+        markdown_report=False,
+    )
+    report = format_json_report(build_report_context(args, payload, summaries), summaries)
+    actions = build_download_actions(report, tmp_path)
+
+    powershell_script = render_download_script(actions, shell="powershell")
+    bash_script = render_download_script(actions, shell="bash")
+
+    assert "Invoke-WebRequest -Headers $headers" in powershell_script
+    assert "Expand-Archive -LiteralPath" in powershell_script
+    assert "# skip stale-artifact: Artifact is expired." in powershell_script
+    assert 'curl -L "${auth_args[@]}"' in bash_script
+    assert "unzip -o" in bash_script
+    assert "# skip stale-artifact: Artifact is expired." in bash_script
+
+
+def test_compatible_downloader_can_emit_powershell_script(tmp_path: Path):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "examples/compatible_downloader.py",
+            "--report",
+            str(ROOT / "examples" / "demo-report.json"),
+            "--output-dir",
+            str(tmp_path),
+            "--emit-script",
+            "powershell",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert "$ErrorActionPreference = 'Stop'" in completed.stdout
+    assert "Invoke-WebRequest -Headers $headers" in completed.stdout
+
+
+def test_compatible_downloader_can_emit_bash_script(tmp_path: Path):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "examples/compatible_downloader.py",
+            "--report",
+            str(ROOT / "examples" / "demo-report.json"),
+            "--output-dir",
+            str(tmp_path),
+            "--emit-script",
+            "bash",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert "set -euo pipefail" in completed.stdout
+    assert 'curl -L "${auth_args[@]}"' in completed.stdout

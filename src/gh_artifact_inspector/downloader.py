@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import zipfile
 from dataclasses import dataclass
@@ -121,6 +122,15 @@ def describe_download_actions(actions: list[DownloadAction]) -> list[str]:
     return logs
 
 
+def render_download_script(actions: list[DownloadAction], shell: str) -> str:
+    normalized_shell = shell.lower()
+    if normalized_shell == "powershell":
+        return _render_powershell_script(actions)
+    if normalized_shell == "bash":
+        return _render_bash_script(actions)
+    raise ValueError(f"Unsupported shell '{shell}'. Expected 'powershell' or 'bash'.")
+
+
 def download_file(url: str, target_path: Path, github_token: str | None = None) -> None:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     request_headers = github_headers(github_token, url)
@@ -169,3 +179,97 @@ def _string_or_none(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _render_powershell_script(actions: list[DownloadAction]) -> str:
+    lines = [
+        "$ErrorActionPreference = 'Stop'",
+        "",
+        "$headers = @{}",
+        "if ($env:GITHUB_TOKEN) {",
+        "  $headers['Authorization'] = \"Bearer $env:GITHUB_TOKEN\"",
+        "  $headers['Accept'] = 'application/vnd.github+json'",
+        "  $headers['X-GitHub-Api-Version'] = '2022-11-28'",
+        "}",
+    ]
+    for action in actions:
+        lines.extend(["", *list(_render_powershell_action(action))])
+    return "\n".join(lines) + "\n"
+
+
+def _render_powershell_action(action: DownloadAction) -> list[str]:
+    if action.strategy not in {"download-and-unzip", "download-as-is"}:
+        return [f"# skip {action.name}: {action.reason}"]
+    if not action.source_url or action.target_path is None:
+        return [f"# skip {action.name}: missing download URL or target path"]
+
+    target_parent = _ps_quote(str(action.target_path.parent))
+    source_url = _ps_quote(action.source_url)
+    target_path = _ps_quote(str(action.target_path))
+    lines = [
+        f"# {action.name}",
+        f"New-Item -ItemType Directory -Force -Path {target_parent} | Out-Null",
+        f"Invoke-WebRequest -Headers $headers -Uri {source_url} -OutFile {target_path}",
+    ]
+    if action.strategy == "download-and-unzip":
+        assert action.extract_dir is not None
+        extract_parent = _ps_quote(str(action.extract_dir.parent))
+        extract_dir = _ps_quote(str(action.extract_dir))
+        lines.extend(
+            [
+                f"New-Item -ItemType Directory -Force -Path {extract_parent} | Out-Null",
+                f"if (Test-Path -LiteralPath {extract_dir}) {{ Remove-Item -Recurse -Force -LiteralPath {extract_dir} }}",
+                f"Expand-Archive -LiteralPath {target_path} -DestinationPath {extract_dir} -Force",
+            ]
+        )
+    return lines
+
+
+def _render_bash_script(actions: list[DownloadAction]) -> str:
+    lines = [
+        "set -euo pipefail",
+        "",
+        'auth_args=()',
+        'if [[ -n "${GITHUB_TOKEN:-}" ]]; then',
+        '  auth_args=(-H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")',
+        "fi",
+    ]
+    for action in actions:
+        lines.extend(["", *list(_render_bash_action(action))])
+    return "\n".join(lines) + "\n"
+
+
+def _render_bash_action(action: DownloadAction) -> list[str]:
+    if action.strategy not in {"download-and-unzip", "download-as-is"}:
+        return [f"# skip {action.name}: {action.reason}"]
+    if not action.source_url or action.target_path is None:
+        return [f"# skip {action.name}: missing download URL or target path"]
+
+    target_parent = _sh_quote(str(action.target_path.parent))
+    source_url = _sh_quote(action.source_url)
+    target_path = _sh_quote(str(action.target_path))
+    lines = [
+        f"# {action.name}",
+        f"mkdir -p {target_parent}",
+        f"curl -L \"${{auth_args[@]}}\" {source_url} -o {target_path}",
+    ]
+    if action.strategy == "download-and-unzip":
+        assert action.extract_dir is not None
+        extract_parent = _sh_quote(str(action.extract_dir.parent))
+        extract_dir = _sh_quote(str(action.extract_dir))
+        lines.extend(
+            [
+                f"mkdir -p {extract_parent}",
+                f"rm -rf {extract_dir}",
+                f"unzip -o {target_path} -d {extract_dir}",
+            ]
+        )
+    return lines
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _sh_quote(value: str) -> str:
+    return shlex.quote(value)

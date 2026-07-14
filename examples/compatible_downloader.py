@@ -13,6 +13,7 @@ from gh_artifact_inspector.downloader import (
     describe_download_actions,
     execute_download_actions,
     load_report,
+    render_download_script,
 )
 
 
@@ -42,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the planned download actions without making network requests.",
     )
+    parser.add_argument(
+        "--emit-script",
+        choices=("powershell", "bash"),
+        help="Print a PowerShell or bash download script instead of executing the plan.",
+    )
     return parser
 
 
@@ -51,12 +57,18 @@ def main(argv: list[str] | None = None) -> int:
 
     report = load_report(args.report)
     actions = build_download_actions(report, args.output_dir)
-    if args.dry_run:
+    if args.emit_script:
+        if args.dry_run:
+            parser.error("--emit-script cannot be combined with --dry-run.")
+        print(render_download_script(actions, shell=args.emit_script), end="")
+    elif args.dry_run:
         logs = describe_download_actions(actions)
+        for line in logs:
+            print(line)
     else:
         logs = execute_download_actions(actions, github_token=args.github_token)
-    for line in logs:
-        print(line)
+        for line in logs:
+            print(line)
     return 0
 
 

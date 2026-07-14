@@ -155,7 +155,7 @@ uv run python -m pytest
 
 ## 下一步
 
-- 支持把下载计划直接导出成 PowerShell / bash 脚本
+- 为导出的下载脚本补更多平台级 smoke 示例，比如 `tar.gz` 或多文件 artifact 情况
 
 ## 兼容下载器示例
 
@@ -182,3 +182,12 @@ python examples/compatible_downloader.py --report examples/demo-report.json --ou
 ```
 
 这样可以把诊断结果继续接到后续脚本、agent 或一次性的排障流程里，而不用手工判断每个 artifact 是否该 unzip。
+
+如果你已经确认报告没问题，只是想把下载计划导出给 PowerShell 或 bash 执行：
+
+```bash
+python examples/compatible_downloader.py --report examples/demo-report.json --output-dir downloaded-artifacts --emit-script powershell
+python examples/compatible_downloader.py --report examples/demo-report.json --output-dir downloaded-artifacts --emit-script bash
+```
+
+导出的脚本会保留 `download-and-unzip` / `download-as-is` / `skip` 三类决策，并约定从环境变量 `GITHUB_TOKEN` 读取认证信息。
