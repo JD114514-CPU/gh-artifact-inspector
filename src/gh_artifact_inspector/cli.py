@@ -66,6 +66,18 @@ class RecentRunInspection:
     strict_failures: list[str]
 
 
+@dataclass(slots=True)
+class WorkflowSummary:
+    title: str
+    runs: int
+    total_artifacts: int
+    expired_artifacts: int
+    zip_artifacts: int
+    direct_file_artifacts: int
+    unknown_artifacts: int
+    runs_with_failures: int
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gh-artifact-inspector",
@@ -562,7 +574,76 @@ def collect_recent_runs_strict_failures(inspections: list[RecentRunInspection]) 
     return failures
 
 
+def summarize_recent_runs_by_workflow(inspections: list[RecentRunInspection]) -> list[WorkflowSummary]:
+    grouped: dict[str, WorkflowSummary] = {}
+    for inspection in inspections:
+        summary = grouped.get(inspection.title)
+        if summary is None:
+            summary = WorkflowSummary(
+                title=inspection.title,
+                runs=0,
+                total_artifacts=0,
+                expired_artifacts=0,
+                zip_artifacts=0,
+                direct_file_artifacts=0,
+                unknown_artifacts=0,
+                runs_with_failures=0,
+            )
+            grouped[inspection.title] = summary
+
+        summary.runs += 1
+        summary.total_artifacts += inspection.total_artifacts
+        summary.expired_artifacts += inspection.expired_artifacts
+        summary.zip_artifacts += inspection.zip_artifacts
+        summary.direct_file_artifacts += inspection.direct_file_artifacts
+        summary.unknown_artifacts += inspection.unknown_artifacts
+        if inspection.strict_failures:
+            summary.runs_with_failures += 1
+
+    return list(grouped.values())
+
+
+def format_workflow_summary_markdown_table(summaries: list[WorkflowSummary]) -> str:
+    header = [
+        "title",
+        "runs",
+        "artifacts",
+        "zip",
+        "direct",
+        "expired",
+        "unknown",
+        "strict",
+    ]
+
+    def escape(value: str) -> str:
+        return value.replace("|", "\\|").replace("\n", " ")
+
+    rows = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+    for summary in summaries:
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    escape(summary.title),
+                    str(summary.runs),
+                    str(summary.total_artifacts),
+                    str(summary.zip_artifacts),
+                    str(summary.direct_file_artifacts),
+                    str(summary.expired_artifacts),
+                    str(summary.unknown_artifacts),
+                    str(summary.runs_with_failures),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(rows)
+
+
 def format_recent_runs_markdown_report(context: RecentRunsContext, inspections: list[RecentRunInspection]) -> str:
+    workflow_summaries = summarize_recent_runs_by_workflow(inspections)
     lines = [
         "# Recent artifact inspection report",
         "",
@@ -574,6 +655,15 @@ def format_recent_runs_markdown_report(context: RecentRunsContext, inspections: 
         "",
         format_recent_runs_markdown_table(inspections),
     ]
+    if workflow_summaries:
+        lines.extend(
+            [
+                "",
+                "## Workflow summary",
+                "",
+                format_workflow_summary_markdown_table(workflow_summaries),
+            ]
+        )
     failures = collect_recent_runs_strict_failures(inspections)
     if failures:
         lines.extend(["", "## Strict failures", ""])
@@ -599,6 +689,7 @@ def format_json_report(context: ReportContext, summaries: list[ArtifactSummary])
 def format_recent_runs_json_report(
     context: RecentRunsContext, inspections: list[RecentRunInspection]
 ) -> dict[str, Any]:
+    workflow_summaries = summarize_recent_runs_by_workflow(inspections)
     return {
         "source": context.source_label,
         "summary": {
@@ -608,6 +699,7 @@ def format_recent_runs_json_report(
             "runs_with_failures": context.runs_with_failures,
         },
         "strict_failures": collect_recent_runs_strict_failures(inspections),
+        "workflow_summary": [asdict(summary) for summary in workflow_summaries],
         "runs": [asdict(inspection) for inspection in inspections],
     }
 

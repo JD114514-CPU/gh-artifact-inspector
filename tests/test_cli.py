@@ -617,3 +617,125 @@ def test_recent_runs_json_report_includes_summary_and_run_rows():
     assert collect_recent_runs_strict_failures(inspections) == [
         "run 102 (Nightly): stale-artifact: artifact expired"
     ]
+
+
+def test_recent_runs_json_report_groups_runs_by_workflow_title():
+    inspections = [
+        RecentRunInspection(
+            run_id=101,
+            run_number=11,
+            run_attempt=1,
+            title="CI",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/101",
+            created_at="2026-07-14T08:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="CI",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=2,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+        ),
+        RecentRunInspection(
+            run_id=103,
+            run_number=13,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/103",
+            created_at="2026-07-14T10:00:00Z",
+            total_artifacts=3,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=2,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+    ]
+
+    context = build_recent_runs_context("example/project", 3, inspections)
+    report = format_recent_runs_json_report(context, inspections)
+
+    assert report["workflow_summary"] == [
+        {
+            "title": "CI",
+            "runs": 2,
+            "total_artifacts": 3,
+            "expired_artifacts": 1,
+            "zip_artifacts": 1,
+            "direct_file_artifacts": 1,
+            "unknown_artifacts": 1,
+            "runs_with_failures": 1,
+        },
+        {
+            "title": "Nightly",
+            "runs": 1,
+            "total_artifacts": 3,
+            "expired_artifacts": 0,
+            "zip_artifacts": 1,
+            "direct_file_artifacts": 2,
+            "unknown_artifacts": 0,
+            "runs_with_failures": 0,
+        },
+    ]
+
+
+def test_recent_runs_markdown_report_includes_workflow_summary_section():
+    inspections = [
+        RecentRunInspection(
+            run_id=101,
+            run_number=11,
+            run_attempt=1,
+            title="CI",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/101",
+            created_at="2026-07-14T08:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="CI",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=2,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+        ),
+    ]
+
+    context = build_recent_runs_context("example/project", 2, inspections)
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "## Workflow summary" in report
+    assert "| CI | 2 | 3 | 1 | 1 | 1 | 1 | 1 |" in report
