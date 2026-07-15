@@ -108,6 +108,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, keep only runs whose artifact inspection has strict failures.",
     )
     parser.add_argument(
+        "--workflow",
+        help="When used with --recent-runs, only inspect workflow runs whose title contains this case-insensitive text.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -160,6 +164,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--from-file cannot be combined with --repo, --run-id, or --run-url.")
     if args.strict_only and args.recent_runs is None:
         raise SystemExit("--strict-only can only be used together with --recent-runs.")
+    if args.workflow and args.recent_runs is None:
+        raise SystemExit("--workflow can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -254,18 +260,27 @@ def request_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
         raise SystemExit(f"Network request failed for {url}: {exc.reason}") from exc
 
 
-def fetch_recent_runs(repo: str, limit: int, headers: dict[str, str]) -> list[dict[str, Any]]:
+def workflow_matches_filter(run: dict[str, Any], workflow_filter: str | None) -> bool:
+    if not workflow_filter:
+        return True
+    title = str(run.get("display_title") or run.get("name") or "")
+    return workflow_filter.lower() in title.lower()
+
+
+def fetch_recent_runs(
+    repo: str, limit: int, headers: dict[str, str], workflow_filter: str | None = None
+) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
     page = 1
     while len(runs) < limit:
-        per_page = min(limit - len(runs), 100)
+        per_page = min(max(limit, 30), 100) if workflow_filter else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
         payload = request_json(url, headers=headers)
         page_runs = payload.get("workflow_runs", [])
         if not isinstance(page_runs, list):
             raise SystemExit(f"Unexpected workflow run payload for {repo}.")
-        runs.extend(page_runs)
+        runs.extend(run for run in page_runs if workflow_matches_filter(run, workflow_filter))
         if len(page_runs) < per_page:
             break
         page += 1
@@ -357,9 +372,15 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
     )
 
 
-def inspect_recent_runs(repo: str, recent_runs: int, headers: dict[str, str], probe_download: bool) -> list[RecentRunInspection]:
+def inspect_recent_runs(
+    repo: str,
+    recent_runs: int,
+    headers: dict[str, str],
+    probe_download: bool,
+    workflow_filter: str | None = None,
+) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
-    for run in fetch_recent_runs(repo, recent_runs, headers):
+    for run in fetch_recent_runs(repo, recent_runs, headers, workflow_filter=workflow_filter):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
         artifacts_url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs/{run_id}/artifacts?per_page=100"
@@ -402,10 +423,12 @@ def build_recent_runs_context(
     *,
     scanned_runs: int | None = None,
     strict_only: bool = False,
+    workflow_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
+    workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
     return RecentRunsContext(
-        source_label=f"recent GitHub Actions runs `{repo}` (limit {recent_runs}{suffix})",
+        source_label=f"recent GitHub Actions runs `{repo}` (limit {recent_runs}{workflow_suffix}{suffix})",
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
         runs_with_artifacts=sum(1 for inspection in inspections if inspection.total_artifacts > 0),
@@ -797,7 +820,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.emit_script:
             raise SystemExit("--emit-script cannot be combined with --recent-runs.")
         repo, recent_runs = resolve_recent_runs_target(args)
-        all_inspections = inspect_recent_runs(repo, recent_runs, headers=headers, probe_download=args.probe_download)
+        all_inspections = inspect_recent_runs(
+            repo,
+            recent_runs,
+            headers=headers,
+            probe_download=args.probe_download,
+            workflow_filter=args.workflow,
+        )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
             repo,
@@ -805,6 +834,7 @@ def main(argv: list[str] | None = None) -> int:
             inspections,
             scanned_runs=len(all_inspections),
             strict_only=args.strict_only,
+            workflow_filter=args.workflow,
         )
 
         if args.json:

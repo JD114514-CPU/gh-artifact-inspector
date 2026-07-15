@@ -33,6 +33,7 @@ from gh_artifact_inspector.cli import (
     summarize_artifact,
     summarize_payload,
     validate_argument_combinations,
+    workflow_matches_filter,
 )
 from gh_artifact_inspector.downloader import (
     build_download_actions,
@@ -271,6 +272,21 @@ def test_validate_argument_combinations_rejects_strict_only_without_recent_runs(
         from_file=None,
         recent_runs=None,
         strict_only=True,
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
+def test_validate_argument_combinations_rejects_workflow_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow="nightly",
     )
 
     with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
@@ -649,6 +665,70 @@ def test_inspect_recent_runs_summarizes_each_run(monkeypatch: pytest.MonkeyPatch
     assert inspections[1].strict_failures == ["stale-artifact: artifact expired"]
 
 
+def test_workflow_matches_filter_uses_case_insensitive_substring():
+    run = {"display_title": "Nightly Artifact Sweep"}
+
+    assert workflow_matches_filter(run, "nightly")
+    assert workflow_matches_filter(run, "artifact")
+    assert not workflow_matches_filter(run, "release")
+
+
+def test_inspect_recent_runs_filters_by_workflow_title(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 12,
+                    "run_attempt": 1,
+                    "display_title": "Nightly",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-14T09:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "name": "stale-artifact",
+                    "size_in_bytes": 50,
+                    "expired": True,
+                    "archive_download_url": "https://api.github.com/repos/example/project/actions/artifacts/2/zip",
+                }
+            ],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        workflow_filter="nightly",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 102
+
+
 def test_filter_recent_run_inspections_keeps_only_strict_failures():
     inspections = [
         RecentRunInspection(
@@ -942,6 +1022,38 @@ def test_recent_runs_markdown_report_shows_filtered_count_when_strict_only():
     assert "strict failures only" in report
     assert "- Runs scanned: 2" in report
     assert "- Runs included: 1" in report
+
+
+def test_recent_runs_markdown_report_mentions_workflow_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        workflow_filter="nightly",
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "workflow contains 'nightly'" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

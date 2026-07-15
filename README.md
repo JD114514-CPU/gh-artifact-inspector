@@ -21,6 +21,7 @@
 - 支持直接从主 CLI 导出 `powershell` / `bash` 下载脚本，不必先手动中转 JSON
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
+- 支持 `--recent-runs N --workflow nightly`，只看某一类 workflow 的最近 runs，避免多流水线仓库噪音
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的 JSON / Markdown 报告会额外按 workflow 名称聚合，方便看哪条流水线最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
@@ -116,6 +117,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 5 --json-report
 ```
 
 它会逐个 run 拉取 artifact 列表，并输出每个 run 的 artifact 数量、zip/direct-file/unknown 分布、strict 失败项，以及按 workflow 名称聚合后的风险汇总。
+
+如果仓库 workflow 很多，但你只想盯住某一类流水线：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 10 --workflow nightly --markdown-report
+```
+
+这里的 `--workflow` 会按 workflow 标题做大小写不敏感的包含匹配，适合只看 `Nightly`、`Release`、`Artifacts` 这类固定名称。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 
