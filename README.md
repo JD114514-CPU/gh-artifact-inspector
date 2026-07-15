@@ -21,6 +21,7 @@
 - 支持直接从主 CLI 导出 `powershell` / `bash` 下载脚本，不必先手动中转 JSON
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
+- 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的 JSON / Markdown 报告会额外按 workflow 名称聚合，方便看哪条流水线最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
@@ -115,6 +116,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 5 --json-report
 ```
 
 它会逐个 run 拉取 artifact 列表，并输出每个 run 的 artifact 数量、zip/direct-file/unknown 分布、strict 失败项，以及按 workflow 名称聚合后的风险汇总。
+
+如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --strict-only --markdown-report
+```
+
+这会保留带有 strict failure 的 runs，并在报告里同时写出“总共扫描了多少 run”和“最终保留了多少 run”。
 
 ## 输出示例
 

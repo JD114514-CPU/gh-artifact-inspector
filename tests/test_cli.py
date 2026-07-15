@@ -18,6 +18,7 @@ from gh_artifact_inspector.cli import (
     build_recent_runs_context,
     collect_strict_failures,
     collect_recent_runs_strict_failures,
+    filter_recent_run_inspections,
     format_recent_runs_json_report,
     format_recent_runs_markdown_report,
     format_json_report,
@@ -254,9 +255,25 @@ def test_validate_argument_combinations_rejects_from_file_with_live_run_flags():
         run_id=123,
         run_url=None,
         from_file=FIXTURE,
+        recent_runs=None,
+        strict_only=False,
     )
 
     with pytest.raises(SystemExit, match="--from-file cannot be combined"):
+        validate_argument_combinations(args)
+
+
+def test_validate_argument_combinations_rejects_strict_only_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=True,
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
         validate_argument_combinations(args)
 
 
@@ -632,6 +649,47 @@ def test_inspect_recent_runs_summarizes_each_run(monkeypatch: pytest.MonkeyPatch
     assert inspections[1].strict_failures == ["stale-artifact: artifact expired"]
 
 
+def test_filter_recent_run_inspections_keeps_only_strict_failures():
+    inspections = [
+        RecentRunInspection(
+            run_id=101,
+            run_number=11,
+            run_attempt=1,
+            title="CI",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/101",
+            created_at="2026-07-14T08:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+        ),
+    ]
+
+    filtered = filter_recent_run_inspections(inspections, strict_only=True)
+
+    assert [inspection.run_id for inspection in filtered] == [102]
+
+
 def test_recent_runs_markdown_report_includes_summary_and_failures():
     inspections = [
         RecentRunInspection(
@@ -668,7 +726,7 @@ def test_recent_runs_markdown_report_includes_summary_and_failures():
         ),
     ]
 
-    context = build_recent_runs_context("example/project", 2, inspections)
+    context = build_recent_runs_context("example/project", 2, inspections, scanned_runs=2)
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert report.startswith("# Recent artifact inspection report")
@@ -713,10 +771,11 @@ def test_recent_runs_json_report_includes_summary_and_run_rows():
         ),
     ]
 
-    context = build_recent_runs_context("example/project", 2, inspections)
+    context = build_recent_runs_context("example/project", 2, inspections, scanned_runs=2)
     report = format_recent_runs_json_report(context, inspections)
 
     assert report["summary"] == {
+        "scanned_runs": 2,
         "total_runs": 2,
         "runs_with_artifacts": 2,
         "total_artifacts": 2,
@@ -781,7 +840,7 @@ def test_recent_runs_json_report_groups_runs_by_workflow_title():
         ),
     ]
 
-    context = build_recent_runs_context("example/project", 3, inspections)
+    context = build_recent_runs_context("example/project", 3, inspections, scanned_runs=3)
     report = format_recent_runs_json_report(context, inspections)
 
     assert report["workflow_summary"] == [
@@ -844,11 +903,45 @@ def test_recent_runs_markdown_report_includes_workflow_summary_section():
         ),
     ]
 
-    context = build_recent_runs_context("example/project", 2, inspections)
+    context = build_recent_runs_context("example/project", 2, inspections, scanned_runs=2)
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "## Workflow summary" in report
     assert "| CI | 2 | 3 | 1 | 1 | 1 | 1 | 1 |" in report
+
+
+def test_recent_runs_markdown_report_shows_filtered_count_when_strict_only():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        2,
+        inspections,
+        scanned_runs=2,
+        strict_only=True,
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "strict failures only" in report
+    assert "- Runs scanned: 2" in report
+    assert "- Runs included: 1" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

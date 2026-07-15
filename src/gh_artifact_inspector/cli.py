@@ -44,6 +44,7 @@ class ReportContext:
 @dataclass(slots=True)
 class RecentRunsContext:
     source_label: str
+    scanned_runs: int
     total_runs: int
     runs_with_artifacts: int
     total_artifacts: int
@@ -102,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inspect the most recent N workflow runs for a repository. Requires --repo and cannot be combined with --run-id, --run-url, or --from-file.",
     )
     parser.add_argument(
+        "--strict-only",
+        action="store_true",
+        help="When used with --recent-runs, keep only runs whose artifact inspection has strict failures.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -152,6 +158,8 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_argument_combinations(args: argparse.Namespace) -> None:
     if args.from_file and any(value is not None for value in (args.repo, args.run_id, args.run_url)):
         raise SystemExit("--from-file cannot be combined with --repo, --run-id, or --run-url.")
+    if args.strict_only and args.recent_runs is None:
+        raise SystemExit("--strict-only can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -379,9 +387,26 @@ def inspect_recent_runs(repo: str, recent_runs: int, headers: dict[str, str], pr
     return inspections
 
 
-def build_recent_runs_context(repo: str, recent_runs: int, inspections: list[RecentRunInspection]) -> RecentRunsContext:
+def filter_recent_run_inspections(
+    inspections: list[RecentRunInspection], *, strict_only: bool
+) -> list[RecentRunInspection]:
+    if not strict_only:
+        return inspections
+    return [inspection for inspection in inspections if inspection.strict_failures]
+
+
+def build_recent_runs_context(
+    repo: str,
+    recent_runs: int,
+    inspections: list[RecentRunInspection],
+    *,
+    scanned_runs: int | None = None,
+    strict_only: bool = False,
+) -> RecentRunsContext:
+    suffix = "; strict failures only" if strict_only else ""
     return RecentRunsContext(
-        source_label=f"recent GitHub Actions runs `{repo}` (limit {recent_runs})",
+        source_label=f"recent GitHub Actions runs `{repo}` (limit {recent_runs}{suffix})",
+        scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
         runs_with_artifacts=sum(1 for inspection in inspections if inspection.total_artifacts > 0),
         total_artifacts=sum(inspection.total_artifacts for inspection in inspections),
@@ -678,13 +703,19 @@ def format_recent_runs_markdown_report(context: RecentRunsContext, inspections: 
         "# Recent artifact inspection report",
         "",
         f"- Source: {context.source_label}",
-        f"- Runs scanned: {context.total_runs}",
+        f"- Runs scanned: {context.scanned_runs}",
+    ]
+    if context.scanned_runs != context.total_runs:
+        lines.append(f"- Runs included: {context.total_runs}")
+    lines.extend(
+        [
         f"- Runs with artifacts: {context.runs_with_artifacts}",
         f"- Total artifacts seen: {context.total_artifacts}",
         f"- Runs with strict failures: {context.runs_with_failures}",
         "",
         format_recent_runs_markdown_table(inspections),
-    ]
+        ]
+    )
     if workflow_summaries:
         lines.extend(
             [
@@ -723,6 +754,7 @@ def format_recent_runs_json_report(
     return {
         "source": context.source_label,
         "summary": {
+            "scanned_runs": context.scanned_runs,
             "total_runs": context.total_runs,
             "runs_with_artifacts": context.runs_with_artifacts,
             "total_artifacts": context.total_artifacts,
@@ -765,8 +797,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.emit_script:
             raise SystemExit("--emit-script cannot be combined with --recent-runs.")
         repo, recent_runs = resolve_recent_runs_target(args)
-        inspections = inspect_recent_runs(repo, recent_runs, headers=headers, probe_download=args.probe_download)
-        context = build_recent_runs_context(repo, recent_runs, inspections)
+        all_inspections = inspect_recent_runs(repo, recent_runs, headers=headers, probe_download=args.probe_download)
+        inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
+        context = build_recent_runs_context(
+            repo,
+            recent_runs,
+            inspections,
+            scanned_runs=len(all_inspections),
+            strict_only=args.strict_only,
+        )
 
         if args.json:
             json.dump([asdict(inspection) for inspection in inspections], sys.stdout, ensure_ascii=False, indent=2)
