@@ -22,8 +22,9 @@
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - 支持 `--recent-runs N --workflow nightly`，只看某一类 workflow 的最近 runs，避免多流水线仓库噪音
+- 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
-- `--recent-runs` 的 JSON / Markdown 报告会额外按 workflow 名称聚合，方便看哪条流水线最常出问题
+- `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
@@ -125,6 +126,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 10 --workflow nightly --ma
 ```
 
 这里的 `--workflow` 会按 workflow 标题做大小写不敏感的包含匹配，适合只看 `Nightly`、`Release`、`Artifacts` 这类固定名称。
+
+如果同一个仓库同时有 `push`、`pull_request`、`schedule` 等多种触发方式，但你只想看其中一类：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --event pull_request --json-report
+```
+
+这里的 `--event` 会按 workflow run 的 GitHub event 名称做大小写不敏感的包含匹配，适合单独排查 PR 校验、定时巡检或手动触发的 artifact 行为。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 

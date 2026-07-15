@@ -67,6 +67,7 @@ class RecentRunInspection:
     direct_file_artifacts: int
     unknown_artifacts: int
     strict_failures: list[str]
+    event: str = "unknown"
 
 
 @dataclass(slots=True)
@@ -110,6 +111,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workflow",
         help="When used with --recent-runs, only inspect workflow runs whose title contains this case-insensitive text.",
+    )
+    parser.add_argument(
+        "--event",
+        help="When used with --recent-runs, only inspect workflow runs whose event matches this case-insensitive text.",
     )
     parser.add_argument(
         "--github-token",
@@ -166,6 +171,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--strict-only can only be used together with --recent-runs.")
     if args.workflow and args.recent_runs is None:
         raise SystemExit("--workflow can only be used together with --recent-runs.")
+    if getattr(args, "event", None) and args.recent_runs is None:
+        raise SystemExit("--event can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -267,20 +274,37 @@ def workflow_matches_filter(run: dict[str, Any], workflow_filter: str | None) ->
     return workflow_filter.lower() in title.lower()
 
 
+def event_matches_filter(run: dict[str, Any], event_filter: str | None) -> bool:
+    if not event_filter:
+        return True
+    event = str(run.get("event") or "")
+    return event_filter.lower() in event.lower()
+
+
 def fetch_recent_runs(
-    repo: str, limit: int, headers: dict[str, str], workflow_filter: str | None = None
+    repo: str,
+    limit: int,
+    headers: dict[str, str],
+    workflow_filter: str | None = None,
+    event_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
     page = 1
     while len(runs) < limit:
-        per_page = min(max(limit, 30), 100) if workflow_filter else min(limit - len(runs), 100)
+        needs_extra_pages = workflow_filter or event_filter
+        per_page = min(max(limit, 30), 100) if needs_extra_pages else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
         payload = request_json(url, headers=headers)
         page_runs = payload.get("workflow_runs", [])
         if not isinstance(page_runs, list):
             raise SystemExit(f"Unexpected workflow run payload for {repo}.")
-        runs.extend(run for run in page_runs if workflow_matches_filter(run, workflow_filter))
+        runs.extend(
+            run
+            for run in page_runs
+            if workflow_matches_filter(run, workflow_filter)
+            and event_matches_filter(run, event_filter)
+        )
         if len(page_runs) < per_page:
             break
         page += 1
@@ -378,9 +402,16 @@ def inspect_recent_runs(
     headers: dict[str, str],
     probe_download: bool,
     workflow_filter: str | None = None,
+    event_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
-    for run in fetch_recent_runs(repo, recent_runs, headers, workflow_filter=workflow_filter):
+    for run in fetch_recent_runs(
+        repo,
+        recent_runs,
+        headers,
+        workflow_filter=workflow_filter,
+        event_filter=event_filter,
+    ):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
         artifacts_url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs/{run_id}/artifacts?per_page=100"
@@ -403,6 +434,7 @@ def inspect_recent_runs(
                 direct_file_artifacts=sum(1 for summary in summaries if summary.archive_kind == "direct-file"),
                 unknown_artifacts=sum(1 for summary in summaries if summary.archive_kind == "unknown"),
                 strict_failures=strict_failures,
+                event=str(run.get("event") or "unknown"),
             )
         )
     return inspections
@@ -424,11 +456,16 @@ def build_recent_runs_context(
     scanned_runs: int | None = None,
     strict_only: bool = False,
     workflow_filter: str | None = None,
+    event_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
+    event_suffix = f"; event contains '{event_filter}'" if event_filter else ""
     return RecentRunsContext(
-        source_label=f"recent GitHub Actions runs `{repo}` (limit {recent_runs}{workflow_suffix}{suffix})",
+        source_label=(
+            f"recent GitHub Actions runs `{repo}` "
+            f"(limit {recent_runs}{workflow_suffix}{event_suffix}{suffix})"
+        ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
         runs_with_artifacts=sum(1 for inspection in inspections if inspection.total_artifacts > 0),
@@ -566,6 +603,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
             "run_number",
             "status",
             "conclusion",
+            "event",
             "artifacts",
             "zip",
             "direct",
@@ -582,6 +620,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
                 str(inspection.run_number or "-"),
                 inspection.status,
                 inspection.conclusion or "-",
+                inspection.event,
                 str(inspection.total_artifacts),
                 str(inspection.zip_artifacts),
                 str(inspection.direct_file_artifacts),
@@ -609,6 +648,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
             "run_number",
             "status",
             "conclusion",
+            "event",
             "artifacts",
             "zip",
             "direct",
@@ -625,6 +665,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
                 str(inspection.run_number or "-"),
                 inspection.status,
                 inspection.conclusion or "-",
+                inspection.event,
                 str(inspection.total_artifacts),
                 str(inspection.zip_artifacts),
                 str(inspection.direct_file_artifacts),
@@ -826,6 +867,7 @@ def main(argv: list[str] | None = None) -> int:
             headers=headers,
             probe_download=args.probe_download,
             workflow_filter=args.workflow,
+            event_filter=args.event,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -835,6 +877,7 @@ def main(argv: list[str] | None = None) -> int:
             scanned_runs=len(all_inspections),
             strict_only=args.strict_only,
             workflow_filter=args.workflow,
+            event_filter=args.event,
         )
 
         if args.json:
