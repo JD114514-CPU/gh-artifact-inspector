@@ -61,6 +61,7 @@ gh-artifact-inspector --run-url https://github.com/owner/name/actions/runs/12345
 ```
 
 如果同时传 `--run-url` 和 `--repo` / `--run-id`，工具会校验两者是否一致，避免静默读错 run。
+如果使用 `--from-file`，就不要再混传 `--repo` / `--run-id` / `--run-url`；CLI 现在会直接报错，避免你以为自己在读线上 run，实际却在消费本地 payload。
 
 私有仓库或更高 rate limit 建议设置：
 

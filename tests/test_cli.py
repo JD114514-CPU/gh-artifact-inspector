@@ -31,6 +31,7 @@ from gh_artifact_inspector.cli import (
     resolve_run_target,
     summarize_artifact,
     summarize_payload,
+    validate_argument_combinations,
 )
 from gh_artifact_inspector.downloader import (
     build_download_actions,
@@ -245,6 +246,18 @@ def test_resolve_recent_runs_target_rejects_run_id_mix():
 
     with pytest.raises(SystemExit, match="cannot be combined with --run-id or --run-url"):
         resolve_recent_runs_target(args)
+
+
+def test_validate_argument_combinations_rejects_from_file_with_live_run_flags():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=123,
+        run_url=None,
+        from_file=FIXTURE,
+    )
+
+    with pytest.raises(SystemExit, match="--from-file cannot be combined"):
+        validate_argument_combinations(args)
 
 
 def test_format_markdown_table_escapes_pipe_characters():
@@ -499,6 +512,31 @@ def test_cli_emit_script_requires_output_dir():
 
     assert completed.returncode != 0
     assert "--output-dir is required when --emit-script is used." in completed.stderr
+
+
+def test_cli_rejects_from_file_with_repo_and_run_id():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--repo",
+            "example/project",
+            "--run-id",
+            "123456789",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    assert completed.returncode != 0
+    assert "--from-file cannot be combined with --repo, --run-id, or --run-url." in completed.stderr
 
 
 def test_cli_emits_powershell_script_from_fixture(tmp_path: Path):

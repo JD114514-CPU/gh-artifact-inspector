@@ -149,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_argument_combinations(args: argparse.Namespace) -> None:
+    if args.from_file and any(value is not None for value in (args.repo, args.run_id, args.run_url)):
+        raise SystemExit("--from-file cannot be combined with --repo, --run-id, or --run-url.")
+
+
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
     if args.from_file:
         return json.loads(args.from_file.read_text(encoding="utf-8"))
@@ -742,6 +747,7 @@ def collect_strict_failures(summaries: list[ArtifactSummary]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    validate_argument_combinations(args)
     selected_formats = sum(
         bool(flag) for flag in (args.json, args.json_report, args.markdown, args.markdown_report, args.emit_script)
     )
