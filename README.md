@@ -26,8 +26,9 @@
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
 - 支持 `--recent-runs N --conclusion failure`，只看某一类运行结论的 runs，便于直接聚焦失败或成功流水线
 - 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
+- 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
-- `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
+- `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event` 和 `actor`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
@@ -161,6 +162,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --status in_progress --
 ```
 
 这里的 `--status` 会按 workflow run 的 status 做大小写不敏感的包含匹配，适合把 `queued` / `in_progress` / `completed` 拆开看，单独排查“还在跑的流水线有没有产出 artifact”这类问题。
+
+如果你只想盯住某个触发者，例如 `dependabot[bot]`、仓库维护者账号，或者你自己的手动触发：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --actor dependabot --markdown-report
+```
+
+这里的 `--actor` 会按 workflow run 的 actor login 做大小写不敏感的包含匹配，适合把 bot run、人工回归、或某个固定账号触发的流水线拆开看。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 

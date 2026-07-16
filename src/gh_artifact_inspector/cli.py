@@ -67,6 +67,7 @@ class RecentRunInspection:
     direct_file_artifacts: int
     unknown_artifacts: int
     strict_failures: list[str]
+    actor: str = "unknown"
     event: str = "unknown"
 
 
@@ -127,6 +128,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--status",
         help="When used with --recent-runs, only inspect workflow runs whose status matches this case-insensitive text.",
+    )
+    parser.add_argument(
+        "--actor",
+        help="When used with --recent-runs, only inspect workflow runs whose actor login matches this case-insensitive text.",
     )
     parser.add_argument(
         "--github-token",
@@ -191,6 +196,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--conclusion can only be used together with --recent-runs.")
     if getattr(args, "status", None) and args.recent_runs is None:
         raise SystemExit("--status can only be used together with --recent-runs.")
+    if getattr(args, "actor", None) and args.recent_runs is None:
+        raise SystemExit("--actor can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -320,6 +327,26 @@ def status_matches_filter(run: dict[str, Any], status_filter: str | None) -> boo
     return status_filter.lower() in status.lower()
 
 
+def run_actor_login(run: dict[str, Any]) -> str:
+    actor = run.get("actor")
+    if isinstance(actor, dict):
+        login = actor.get("login")
+        if login:
+            return str(login)
+    triggering_actor = run.get("triggering_actor")
+    if isinstance(triggering_actor, dict):
+        login = triggering_actor.get("login")
+        if login:
+            return str(login)
+    return "unknown"
+
+
+def actor_matches_filter(run: dict[str, Any], actor_filter: str | None) -> bool:
+    if not actor_filter:
+        return True
+    return actor_filter.lower() in run_actor_login(run).lower()
+
+
 def fetch_recent_runs(
     repo: str,
     limit: int,
@@ -329,12 +356,20 @@ def fetch_recent_runs(
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
+    actor_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
     page = 1
     while len(runs) < limit:
-        needs_extra_pages = workflow_filter or branch_filter or event_filter or conclusion_filter or status_filter
+        needs_extra_pages = (
+            workflow_filter
+            or branch_filter
+            or event_filter
+            or conclusion_filter
+            or status_filter
+            or actor_filter
+        )
         per_page = min(max(limit, 30), 100) if needs_extra_pages else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
         payload = request_json(url, headers=headers)
@@ -349,6 +384,7 @@ def fetch_recent_runs(
             and event_matches_filter(run, event_filter)
             and conclusion_matches_filter(run, conclusion_filter)
             and status_matches_filter(run, status_filter)
+            and actor_matches_filter(run, actor_filter)
         )
         if len(page_runs) < per_page:
             break
@@ -451,6 +487,7 @@ def inspect_recent_runs(
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
+    actor_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -462,6 +499,7 @@ def inspect_recent_runs(
         event_filter=event_filter,
         conclusion_filter=conclusion_filter,
         status_filter=status_filter,
+        actor_filter=actor_filter,
     ):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
@@ -485,6 +523,7 @@ def inspect_recent_runs(
                 direct_file_artifacts=sum(1 for summary in summaries if summary.archive_kind == "direct-file"),
                 unknown_artifacts=sum(1 for summary in summaries if summary.archive_kind == "unknown"),
                 strict_failures=strict_failures,
+                actor=run_actor_login(run),
                 event=str(run.get("event") or "unknown"),
             )
         )
@@ -511,6 +550,7 @@ def build_recent_runs_context(
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
+    actor_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
@@ -518,10 +558,11 @@ def build_recent_runs_context(
     event_suffix = f"; event contains '{event_filter}'" if event_filter else ""
     conclusion_suffix = f"; conclusion contains '{conclusion_filter}'" if conclusion_filter else ""
     status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
+    actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -661,6 +702,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
             "status",
             "conclusion",
             "event",
+            "actor",
             "artifacts",
             "zip",
             "direct",
@@ -678,6 +720,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
+                inspection.actor,
                 str(inspection.total_artifacts),
                 str(inspection.zip_artifacts),
                 str(inspection.direct_file_artifacts),
@@ -706,6 +749,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
             "status",
             "conclusion",
             "event",
+            "actor",
             "artifacts",
             "zip",
             "direct",
@@ -723,6 +767,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
+                inspection.actor,
                 str(inspection.total_artifacts),
                 str(inspection.zip_artifacts),
                 str(inspection.direct_file_artifacts),
@@ -928,6 +973,7 @@ def main(argv: list[str] | None = None) -> int:
             event_filter=args.event,
             conclusion_filter=args.conclusion,
             status_filter=args.status,
+            actor_filter=args.actor,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -941,6 +987,7 @@ def main(argv: list[str] | None = None) -> int:
             event_filter=args.event,
             conclusion_filter=args.conclusion,
             status_filter=args.status,
+            actor_filter=args.actor,
         )
 
         if args.json:
