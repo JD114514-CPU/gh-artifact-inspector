@@ -22,6 +22,7 @@
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - 支持 `--recent-runs N --workflow nightly`，只看某一类 workflow 的最近 runs，避免多流水线仓库噪音
+- 支持 `--recent-runs N --branch main`，只看某一条分支上的最近 runs，便于区分主干、发布分支或长期维护分支
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
 - 支持 `--recent-runs N --conclusion failure`，只看某一类运行结论的 runs，便于直接聚焦失败或成功流水线
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
@@ -127,6 +128,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 10 --workflow nightly --ma
 ```
 
 这里的 `--workflow` 会按 workflow 标题做大小写不敏感的包含匹配，适合只看 `Nightly`、`Release`、`Artifacts` 这类固定名称。
+
+如果同一个仓库同时维护 `main`、`release/*` 或长期支持分支，但你只想看其中一条分支：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --branch main --markdown-report
+```
+
+这里的 `--branch` 会按 workflow run 的 `head_branch` 做大小写不敏感的包含匹配，适合只看主干回归、发布分支产物，或者把不同分支的 artifact 风险拆开看。
 
 如果同一个仓库同时有 `push`、`pull_request`、`schedule` 等多种触发方式，但你只想看其中一类：
 

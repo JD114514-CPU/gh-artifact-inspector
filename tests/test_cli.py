@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from gh_artifact_inspector.cli import (
+    branch_matches_filter,
     build_report_context,
     build_recent_runs_context,
     collect_strict_failures,
@@ -311,6 +312,24 @@ def test_validate_argument_combinations_rejects_event_without_recent_runs():
         validate_argument_combinations(args)
 
 
+def test_validate_argument_combinations_rejects_branch_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        branch="main",
+        event=None,
+        conclusion=None,
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
 def test_validate_argument_combinations_rejects_conclusion_without_recent_runs():
     args = argparse.Namespace(
         repo="example/project",
@@ -459,6 +478,13 @@ def test_cli_emits_markdown_report_from_fixture():
     assert "# Artifact inspection report" in output
     assert f"- Source: saved payload `{FIXTURE}`" in output
     assert "| stale-artifact | 512 | yes | unknown | - | unavailable |" in output
+
+
+def test_branch_matches_filter_uses_head_branch_case_insensitively():
+    run = {"head_branch": "Release/Main"}
+
+    assert branch_matches_filter(run, "main")
+    assert not branch_matches_filter(run, "develop")
 
 
 def test_cli_emits_json_report_from_fixture():
@@ -837,6 +863,68 @@ def test_inspect_recent_runs_filters_by_event(monkeypatch: pytest.MonkeyPatch):
 def test_conclusion_matches_filter_is_case_insensitive():
     assert conclusion_matches_filter({"conclusion": "failure"}, "FAIL")
     assert not conclusion_matches_filter({"conclusion": "success"}, "failure")
+
+
+def test_inspect_recent_runs_filters_by_branch(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "head_branch": "main",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 12,
+                    "run_attempt": 1,
+                    "display_title": "Nightly",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "event": "schedule",
+                    "head_branch": "release/v1",
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-14T09:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "name": "bundle.zip",
+                    "size_in_bytes": 100,
+                    "expired": False,
+                    "archive_download_url": "https://api.github.com/repos/example/project/actions/artifacts/1/zip",
+                    "content_type": "application/zip",
+                }
+            ],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        branch_filter="release",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 102
+    assert inspections[0].conclusion == "failure"
 
 
 def test_inspect_recent_runs_filters_by_conclusion(monkeypatch: pytest.MonkeyPatch):
@@ -1258,6 +1346,39 @@ def test_recent_runs_markdown_report_mentions_event_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "event contains 'schedule'" in report
+
+
+def test_recent_runs_markdown_report_mentions_branch_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+            event="schedule",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        branch_filter="main",
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "branch contains 'main'" in report
 
 
 def test_recent_runs_markdown_report_mentions_conclusion_filter():
