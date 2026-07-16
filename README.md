@@ -23,6 +23,7 @@
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - 支持 `--recent-runs N --workflow nightly`，只看某一类 workflow 的最近 runs，避免多流水线仓库噪音
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
+- 支持 `--recent-runs N --conclusion failure`，只看某一类运行结论的 runs，便于直接聚焦失败或成功流水线
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
@@ -134,6 +135,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --event pull_request --
 ```
 
 这里的 `--event` 会按 workflow run 的 GitHub event 名称做大小写不敏感的包含匹配，适合单独排查 PR 校验、定时巡检或手动触发的 artifact 行为。
+
+如果你只想盯住失败或成功这类特定结论的 runs：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --conclusion failure --markdown-report
+```
+
+这里的 `--conclusion` 会按 workflow run 的 conclusion 做大小写不敏感的包含匹配，适合把失败 run 单独拉出来排查 artifact 问题，或者只看 success run 验证修复后的稳定性。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 
