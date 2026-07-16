@@ -125,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose conclusion matches this case-insensitive text.",
     )
     parser.add_argument(
+        "--status",
+        help="When used with --recent-runs, only inspect workflow runs whose status matches this case-insensitive text.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -185,6 +189,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--event can only be used together with --recent-runs.")
     if getattr(args, "conclusion", None) and args.recent_runs is None:
         raise SystemExit("--conclusion can only be used together with --recent-runs.")
+    if getattr(args, "status", None) and args.recent_runs is None:
+        raise SystemExit("--status can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -307,6 +313,13 @@ def conclusion_matches_filter(run: dict[str, Any], conclusion_filter: str | None
     return conclusion_filter.lower() in conclusion.lower()
 
 
+def status_matches_filter(run: dict[str, Any], status_filter: str | None) -> bool:
+    if not status_filter:
+        return True
+    status = str(run.get("status") or "")
+    return status_filter.lower() in status.lower()
+
+
 def fetch_recent_runs(
     repo: str,
     limit: int,
@@ -315,12 +328,13 @@ def fetch_recent_runs(
     branch_filter: str | None = None,
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
+    status_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
     page = 1
     while len(runs) < limit:
-        needs_extra_pages = workflow_filter or branch_filter or event_filter or conclusion_filter
+        needs_extra_pages = workflow_filter or branch_filter or event_filter or conclusion_filter or status_filter
         per_page = min(max(limit, 30), 100) if needs_extra_pages else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
         payload = request_json(url, headers=headers)
@@ -334,6 +348,7 @@ def fetch_recent_runs(
             and branch_matches_filter(run, branch_filter)
             and event_matches_filter(run, event_filter)
             and conclusion_matches_filter(run, conclusion_filter)
+            and status_matches_filter(run, status_filter)
         )
         if len(page_runs) < per_page:
             break
@@ -435,6 +450,7 @@ def inspect_recent_runs(
     branch_filter: str | None = None,
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
+    status_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -445,6 +461,7 @@ def inspect_recent_runs(
         branch_filter=branch_filter,
         event_filter=event_filter,
         conclusion_filter=conclusion_filter,
+        status_filter=status_filter,
     ):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
@@ -493,16 +510,18 @@ def build_recent_runs_context(
     branch_filter: str | None = None,
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
+    status_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
     branch_suffix = f"; branch contains '{branch_filter}'" if branch_filter else ""
     event_suffix = f"; event contains '{event_filter}'" if event_filter else ""
     conclusion_suffix = f"; conclusion contains '{conclusion_filter}'" if conclusion_filter else ""
+    status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -908,6 +927,7 @@ def main(argv: list[str] | None = None) -> int:
             branch_filter=args.branch,
             event_filter=args.event,
             conclusion_filter=args.conclusion,
+            status_filter=args.status,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -920,6 +940,7 @@ def main(argv: list[str] | None = None) -> int:
             branch_filter=args.branch,
             event_filter=args.event,
             conclusion_filter=args.conclusion,
+            status_filter=args.status,
         )
 
         if args.json:

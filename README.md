@@ -25,6 +25,7 @@
 - 支持 `--recent-runs N --branch main`，只看某一条分支上的最近 runs，便于区分主干、发布分支或长期维护分支
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
 - 支持 `--recent-runs N --conclusion failure`，只看某一类运行结论的 runs，便于直接聚焦失败或成功流水线
+- 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
@@ -152,6 +153,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --conclusion failure --
 ```
 
 这里的 `--conclusion` 会按 workflow run 的 conclusion 做大小写不敏感的包含匹配，适合把失败 run 单独拉出来排查 artifact 问题，或者只看 success run 验证修复后的稳定性。
+
+如果你只想盯住运行中的、排队中的，或已经完成的 runs：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --status in_progress --markdown-report
+```
+
+这里的 `--status` 会按 workflow run 的 status 做大小写不敏感的包含匹配，适合把 `queued` / `in_progress` / `completed` 拆开看，单独排查“还在跑的流水线有没有产出 artifact”这类问题。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 

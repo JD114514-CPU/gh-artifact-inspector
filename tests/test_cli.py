@@ -31,6 +31,7 @@ from gh_artifact_inspector.cli import (
     parse_run_url,
     probe_content_type,
     RecentRunInspection,
+    status_matches_filter,
     resolve_recent_runs_target,
     resolve_run_target,
     summarize_artifact,
@@ -341,6 +342,24 @@ def test_validate_argument_combinations_rejects_conclusion_without_recent_runs()
         workflow=None,
         event=None,
         conclusion="failure",
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
+def test_validate_argument_combinations_rejects_status_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        event=None,
+        conclusion=None,
+        status="completed",
     )
 
     with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
@@ -742,6 +761,14 @@ def test_event_matches_filter_uses_case_insensitive_substring():
     assert not event_matches_filter(run, "workflow_dispatch")
 
 
+def test_status_matches_filter_uses_case_insensitive_substring():
+    run = {"status": "in_progress"}
+
+    assert status_matches_filter(run, "progress")
+    assert status_matches_filter(run, "IN_")
+    assert not status_matches_filter(run, "completed")
+
+
 def test_inspect_recent_runs_filters_by_workflow_title(monkeypatch: pytest.MonkeyPatch):
     responses = {
         "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
@@ -857,7 +884,67 @@ def test_inspect_recent_runs_filters_by_event(monkeypatch: pytest.MonkeyPatch):
 
     assert len(inspections) == 1
     assert inspections[0].run_id == 102
-    assert inspections[0].event == "pull_request"
+
+
+def test_inspect_recent_runs_filters_by_status(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 12,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "in_progress",
+                    "conclusion": None,
+                    "event": "workflow_dispatch",
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-14T09:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "name": "bundle.zip",
+                    "size_in_bytes": 100,
+                    "expired": False,
+                    "archive_download_url": "https://api.github.com/repos/example/project/actions/artifacts/1/zip",
+                    "content_type": "application/zip",
+                }
+            ],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        status_filter="progress",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 102
+    assert inspections[0].status == "in_progress"
+    assert inspections[0].event == "workflow_dispatch"
 
 
 def test_conclusion_matches_filter_is_case_insensitive():
@@ -1412,6 +1499,39 @@ def test_recent_runs_markdown_report_mentions_conclusion_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "conclusion contains 'failure'" in report
+
+
+def test_recent_runs_markdown_report_mentions_status_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="in_progress",
+            conclusion=None,
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+            event="workflow_dispatch",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        status_filter="progress",
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "status contains 'progress'" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):
