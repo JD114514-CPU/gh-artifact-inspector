@@ -23,13 +23,14 @@
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - 支持 `--recent-runs N --workflow nightly`，只看某一类 workflow 的最近 runs，避免多流水线仓库噪音
 - 支持 `--recent-runs N --branch main`，只看某一条分支上的最近 runs，便于区分主干、发布分支或长期维护分支
+- 支持 `--recent-runs N --head-sha abc123`，只看某个 commit 对应的 runs，便于把同一分支上的不同提交拆开排查
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
 - 支持 `--recent-runs N --conclusion failure`，只看某一类运行结论的 runs，便于直接聚焦失败或成功流水线
 - 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
-- `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式或哪次 rerun 最常出问题
+- `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
@@ -139,6 +140,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --branch main --markdow
 ```
 
 这里的 `--branch` 会按 workflow run 的 `head_branch` 做大小写不敏感的包含匹配，适合只看主干回归、发布分支产物，或者把不同分支的 artifact 风险拆开看。
+
+如果你想把同一条分支上的不同提交拆开排查：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --head-sha 44e5d386 --markdown-report
+```
+
+这里的 `--head-sha` 会按 workflow run 的 `head_sha` 做大小写不敏感的包含匹配；终端表格和 Markdown 表格会展示 12 位短 SHA，JSON 报告保留完整 SHA，适合直接对齐某次 commit 或 release 前后的 run。
 
 如果同一个仓库同时有 `push`、`pull_request`、`schedule` 等多种触发方式，但你只想看其中一类：
 

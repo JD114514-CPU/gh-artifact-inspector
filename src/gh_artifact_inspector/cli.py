@@ -69,6 +69,7 @@ class RecentRunInspection:
     strict_failures: list[str]
     actor: str = "unknown"
     event: str = "unknown"
+    head_sha: str | None = None
 
 
 @dataclass(slots=True)
@@ -116,6 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--branch",
         help="When used with --recent-runs, only inspect workflow runs whose head branch matches this case-insensitive text.",
+    )
+    parser.add_argument(
+        "--head-sha",
+        help="When used with --recent-runs, only inspect workflow runs whose head SHA matches this case-insensitive text.",
     )
     parser.add_argument(
         "--event",
@@ -195,6 +200,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--workflow can only be used together with --recent-runs.")
     if getattr(args, "branch", None) and args.recent_runs is None:
         raise SystemExit("--branch can only be used together with --recent-runs.")
+    if getattr(args, "head_sha", None) and args.recent_runs is None:
+        raise SystemExit("--head-sha can only be used together with --recent-runs.")
     if getattr(args, "event", None) and args.recent_runs is None:
         raise SystemExit("--event can only be used together with --recent-runs.")
     if getattr(args, "conclusion", None) and args.recent_runs is None:
@@ -313,6 +320,13 @@ def branch_matches_filter(run: dict[str, Any], branch_filter: str | None) -> boo
     return branch_filter.lower() in branch.lower()
 
 
+def head_sha_matches_filter(run: dict[str, Any], head_sha_filter: str | None) -> bool:
+    if not head_sha_filter:
+        return True
+    head_sha = str(run.get("head_sha") or "")
+    return head_sha_filter.lower() in head_sha.lower()
+
+
 def event_matches_filter(run: dict[str, Any], event_filter: str | None) -> bool:
     if not event_filter:
         return True
@@ -372,6 +386,7 @@ def fetch_recent_runs(
     headers: dict[str, str],
     workflow_filter: str | None = None,
     branch_filter: str | None = None,
+    head_sha_filter: str | None = None,
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
@@ -385,6 +400,7 @@ def fetch_recent_runs(
         needs_extra_pages = (
             workflow_filter
             or branch_filter
+            or head_sha_filter
             or event_filter
             or conclusion_filter
             or status_filter
@@ -402,6 +418,7 @@ def fetch_recent_runs(
             for run in page_runs
             if workflow_matches_filter(run, workflow_filter)
             and branch_matches_filter(run, branch_filter)
+            and head_sha_matches_filter(run, head_sha_filter)
             and event_matches_filter(run, event_filter)
             and conclusion_matches_filter(run, conclusion_filter)
             and status_matches_filter(run, status_filter)
@@ -506,6 +523,7 @@ def inspect_recent_runs(
     probe_download: bool,
     workflow_filter: str | None = None,
     branch_filter: str | None = None,
+    head_sha_filter: str | None = None,
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
@@ -519,6 +537,7 @@ def inspect_recent_runs(
         headers,
         workflow_filter=workflow_filter,
         branch_filter=branch_filter,
+        head_sha_filter=head_sha_filter,
         event_filter=event_filter,
         conclusion_filter=conclusion_filter,
         status_filter=status_filter,
@@ -549,6 +568,7 @@ def inspect_recent_runs(
                 strict_failures=strict_failures,
                 actor=run_actor_login(run),
                 event=str(run.get("event") or "unknown"),
+                head_sha=str(run.get("head_sha")) if run.get("head_sha") is not None else None,
             )
         )
     return inspections
@@ -571,6 +591,7 @@ def build_recent_runs_context(
     strict_only: bool = False,
     workflow_filter: str | None = None,
     branch_filter: str | None = None,
+    head_sha_filter: str | None = None,
     event_filter: str | None = None,
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
@@ -580,6 +601,7 @@ def build_recent_runs_context(
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
     branch_suffix = f"; branch contains '{branch_filter}'" if branch_filter else ""
+    head_sha_suffix = f"; head_sha contains '{head_sha_filter}'" if head_sha_filter else ""
     event_suffix = f"; event contains '{event_filter}'" if event_filter else ""
     conclusion_suffix = f"; conclusion contains '{conclusion_filter}'" if conclusion_filter else ""
     status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
@@ -588,7 +610,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -726,6 +748,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
             "run_id",
             "run_number",
             "run_attempt",
+            "head_sha",
             "status",
             "conclusion",
             "event",
@@ -740,11 +763,13 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
         ]
     ]
     for inspection in inspections:
+        display_head_sha = (inspection.head_sha or "-")[:12]
         rows.append(
             [
                 str(inspection.run_id),
                 str(inspection.run_number or "-"),
                 str(inspection.run_attempt or "-"),
+                display_head_sha,
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
@@ -775,6 +800,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
             "run_id",
             "run_number",
             "run_attempt",
+            "head_sha",
             "status",
             "conclusion",
             "event",
@@ -789,11 +815,13 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
         ]
     ]
     for inspection in inspections:
+        display_head_sha = (inspection.head_sha or "-")[:12]
         rows.append(
             [
                 str(inspection.run_id),
                 str(inspection.run_number or "-"),
                 str(inspection.run_attempt or "-"),
+                display_head_sha,
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
@@ -1000,6 +1028,7 @@ def main(argv: list[str] | None = None) -> int:
             probe_download=args.probe_download,
             workflow_filter=args.workflow,
             branch_filter=args.branch,
+            head_sha_filter=args.head_sha,
             event_filter=args.event,
             conclusion_filter=args.conclusion,
             status_filter=args.status,
@@ -1015,6 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
             strict_only=args.strict_only,
             workflow_filter=args.workflow,
             branch_filter=args.branch,
+            head_sha_filter=args.head_sha,
             event_filter=args.event,
             conclusion_filter=args.conclusion,
             status_filter=args.status,
