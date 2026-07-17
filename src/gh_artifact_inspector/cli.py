@@ -134,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose actor login matches this case-insensitive text.",
     )
     parser.add_argument(
+        "--attempt",
+        type=int,
+        help="When used with --recent-runs, only inspect workflow runs whose run attempt exactly matches this integer.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -198,6 +203,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--status can only be used together with --recent-runs.")
     if getattr(args, "actor", None) and args.recent_runs is None:
         raise SystemExit("--actor can only be used together with --recent-runs.")
+    if getattr(args, "attempt", None) is not None and args.recent_runs is None:
+        raise SystemExit("--attempt can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -347,6 +354,18 @@ def actor_matches_filter(run: dict[str, Any], actor_filter: str | None) -> bool:
     return actor_filter.lower() in run_actor_login(run).lower()
 
 
+def attempt_matches_filter(run: dict[str, Any], attempt_filter: int | None) -> bool:
+    if attempt_filter is None:
+        return True
+    run_attempt = run.get("run_attempt")
+    if run_attempt is None:
+        return False
+    try:
+        return int(run_attempt) == attempt_filter
+    except (TypeError, ValueError):
+        return False
+
+
 def fetch_recent_runs(
     repo: str,
     limit: int,
@@ -357,6 +376,7 @@ def fetch_recent_runs(
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
     actor_filter: str | None = None,
+    attempt_filter: int | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
@@ -369,6 +389,7 @@ def fetch_recent_runs(
             or conclusion_filter
             or status_filter
             or actor_filter
+            or attempt_filter is not None
         )
         per_page = min(max(limit, 30), 100) if needs_extra_pages else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
@@ -385,6 +406,7 @@ def fetch_recent_runs(
             and conclusion_matches_filter(run, conclusion_filter)
             and status_matches_filter(run, status_filter)
             and actor_matches_filter(run, actor_filter)
+            and attempt_matches_filter(run, attempt_filter)
         )
         if len(page_runs) < per_page:
             break
@@ -488,6 +510,7 @@ def inspect_recent_runs(
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
     actor_filter: str | None = None,
+    attempt_filter: int | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -500,6 +523,7 @@ def inspect_recent_runs(
         conclusion_filter=conclusion_filter,
         status_filter=status_filter,
         actor_filter=actor_filter,
+        attempt_filter=attempt_filter,
     ):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
@@ -551,6 +575,7 @@ def build_recent_runs_context(
     conclusion_filter: str | None = None,
     status_filter: str | None = None,
     actor_filter: str | None = None,
+    attempt_filter: int | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
@@ -559,10 +584,11 @@ def build_recent_runs_context(
     conclusion_suffix = f"; conclusion contains '{conclusion_filter}'" if conclusion_filter else ""
     status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
     actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
+    attempt_suffix = f"; attempt = {attempt_filter}" if attempt_filter is not None else ""
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -974,6 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
             conclusion_filter=args.conclusion,
             status_filter=args.status,
             actor_filter=args.actor,
+            attempt_filter=args.attempt,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -988,6 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
             conclusion_filter=args.conclusion,
             status_filter=args.status,
             actor_filter=args.actor,
+            attempt_filter=args.attempt,
         )
 
         if args.json:

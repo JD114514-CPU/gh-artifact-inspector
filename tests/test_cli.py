@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gh_artifact_inspector.cli import (
     actor_matches_filter,
+    attempt_matches_filter,
     branch_matches_filter,
     build_report_context,
     build_recent_runs_context,
@@ -386,6 +387,26 @@ def test_validate_argument_combinations_rejects_actor_without_recent_runs():
         validate_argument_combinations(args)
 
 
+def test_validate_argument_combinations_rejects_attempt_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=2,
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
 def test_format_markdown_table_escapes_pipe_characters():
     summary = summarize_artifact(
         {
@@ -532,6 +553,14 @@ def test_actor_matches_filter_uses_actor_login_case_insensitively():
     assert actor_matches_filter(run, "dependabot")
     assert actor_matches_filter(run, "BOT")
     assert not actor_matches_filter(run, "renovate")
+
+
+def test_attempt_matches_filter_uses_exact_integer_match():
+    run = {"run_attempt": 2}
+
+    assert attempt_matches_filter(run, 2)
+    assert not attempt_matches_filter(run, 1)
+    assert not attempt_matches_filter({}, 2)
 
 
 def test_cli_emits_json_report_from_fixture():
@@ -978,6 +1007,60 @@ def test_inspect_recent_runs_filters_by_actor(monkeypatch: pytest.MonkeyPatch):
     assert len(inspections) == 1
     assert inspections[0].run_id == 102
     assert inspections[0].actor == "dependabot[bot]"
+
+
+def test_inspect_recent_runs_filters_by_attempt(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "actor": {"login": "octocat"},
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 11,
+                    "run_attempt": 2,
+                    "display_title": "CI rerun",
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "event": "workflow_dispatch",
+                    "actor": {"login": "octocat"},
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-14T09:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 0,
+            "artifacts": [],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        attempt_filter=2,
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 102
+    assert inspections[0].run_attempt == 2
 
 
 def test_inspect_recent_runs_filters_by_status(monkeypatch: pytest.MonkeyPatch):
@@ -1661,6 +1744,40 @@ def test_recent_runs_markdown_report_mentions_actor_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "actor contains 'dependabot'" in report
+
+
+def test_recent_runs_markdown_report_mentions_attempt_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=2,
+            title="Nightly rerun",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+            actor="octocat",
+            event="workflow_dispatch",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        attempt_filter=2,
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "attempt = 2" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

@@ -27,6 +27,7 @@
 - 支持 `--recent-runs N --conclusion failure`，只看某一类运行结论的 runs，便于直接聚焦失败或成功流水线
 - 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
+- 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event` 和 `actor`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
@@ -170,6 +171,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --actor dependabot --ma
 ```
 
 这里的 `--actor` 会按 workflow run 的 actor login 做大小写不敏感的包含匹配，适合把 bot run、人工回归、或某个固定账号触发的流水线拆开看。
+
+如果你想把同一个 workflow run 的首次执行和后续 rerun 分开看：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --attempt 2 --markdown-report
+```
+
+这里的 `--attempt` 会按 workflow run 的 `run_attempt` 做精确整数匹配，适合单独排查“只有重试时才出现的 artifact 问题”。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 
