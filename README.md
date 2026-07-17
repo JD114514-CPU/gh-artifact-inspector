@@ -29,7 +29,7 @@
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
-- `--recent-runs` 的 JSON / Markdown 报告会额外带上 run `event` 和 `actor`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式最常出问题
+- `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪类触发方式或哪次 rerun 最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 

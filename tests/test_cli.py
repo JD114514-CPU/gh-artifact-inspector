@@ -24,7 +24,9 @@ from gh_artifact_inspector.cli import (
     conclusion_matches_filter,
     filter_recent_run_inspections,
     format_recent_runs_json_report,
+    format_recent_runs_markdown_table,
     format_recent_runs_markdown_report,
+    format_recent_runs_table,
     format_json_report,
     format_markdown_table,
     format_markdown_report,
@@ -1333,7 +1335,7 @@ def test_recent_runs_markdown_report_includes_summary_and_failures():
 
     assert report.startswith("# Recent artifact inspection report")
     assert "- Runs scanned: 2" in report
-    assert "| 102 | 12 | completed | failure | unknown | unknown | 1 | 0 | 0 | 1 | 1 | 1 | Nightly |" in report
+    assert "| 102 | 12 | 1 | completed | failure | unknown | unknown | 1 | 0 | 0 | 1 | 1 | 1 | Nightly |" in report
     assert "- run 102 (Nightly): stale-artifact: artifact expired" in report
 
 
@@ -1512,6 +1514,63 @@ def test_recent_runs_markdown_report_includes_workflow_summary_section():
 
     assert "## Workflow summary" in report
     assert "| CI | 2 | 3 | 1 | 1 | 1 | 1 | 1 |" in report
+
+
+def test_recent_runs_table_includes_run_attempt_column():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=2,
+            title="Nightly rerun",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+            actor="octocat",
+            event="workflow_dispatch",
+        ),
+    ]
+
+    table = format_recent_runs_table(inspections)
+
+    assert "run_attempt" in table.splitlines()[0]
+    assert "102" in table
+    assert "2" in table
+
+
+def test_recent_runs_markdown_table_includes_run_attempt_column():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=2,
+            title="Nightly rerun",
+            status="completed",
+            conclusion="failure",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+            actor="octocat",
+            event="workflow_dispatch",
+        ),
+    ]
+
+    table = format_recent_runs_markdown_table(inspections)
+
+    assert "| run_id | run_number | run_attempt | status |" in table
+    assert "| 102 | 12 | 2 | completed |" in table
 
 
 def test_recent_runs_markdown_report_shows_filtered_count_when_strict_only():

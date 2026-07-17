@@ -725,6 +725,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
         [
             "run_id",
             "run_number",
+            "run_attempt",
             "status",
             "conclusion",
             "event",
@@ -743,6 +744,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
             [
                 str(inspection.run_id),
                 str(inspection.run_number or "-"),
+                str(inspection.run_attempt or "-"),
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
@@ -772,6 +774,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
         [
             "run_id",
             "run_number",
+            "run_attempt",
             "status",
             "conclusion",
             "event",
@@ -790,6 +793,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
             [
                 str(inspection.run_id),
                 str(inspection.run_number or "-"),
+                str(inspection.run_attempt or "-"),
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
