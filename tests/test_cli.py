@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gh_artifact_inspector.cli import (
     actor_matches_filter,
+    artifact_name_matches_filter,
     attempt_matches_filter,
     branch_matches_filter,
     build_report_context,
@@ -23,6 +24,7 @@ from gh_artifact_inspector.cli import (
     collect_recent_runs_strict_failures,
     conclusion_matches_filter,
     filter_recent_run_inspections,
+    filter_summaries_by_artifact_name,
     format_recent_runs_json_report,
     format_recent_runs_markdown_table,
     format_recent_runs_markdown_report,
@@ -593,6 +595,21 @@ def test_attempt_matches_filter_uses_exact_integer_match():
     assert not attempt_matches_filter({}, 2)
 
 
+def test_artifact_name_matches_filter_uses_case_insensitive_substring():
+    assert artifact_name_matches_filter("Coverage-Summary.JSON", "summary")
+    assert artifact_name_matches_filter("Coverage-Summary.JSON", "COVERAGE")
+    assert not artifact_name_matches_filter("Coverage-Summary.JSON", "bundle")
+
+
+def test_filter_summaries_by_artifact_name_keeps_only_matching_rows():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+
+    filtered = filter_summaries_by_artifact_name(summaries, "summary")
+
+    assert [summary.name for summary in filtered] == ["coverage-summary.json"]
+
+
 def test_cli_emits_json_report_from_fixture():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -617,6 +634,31 @@ def test_cli_emits_json_report_from_fixture():
     assert payload["summary"]["expired_artifacts"] == 1
     assert payload["strict_failures"] == ["stale-artifact: artifact expired"]
     assert payload["artifacts"][0]["name"] == "bundle.zip"
+
+
+def test_cli_emits_filtered_json_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--artifact-name",
+            "summary",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["coverage-summary.json"]
 
 
 def test_cli_strict_fails_when_fixture_contains_expired_artifact():
@@ -1153,6 +1195,62 @@ def test_inspect_recent_runs_filters_by_attempt(monkeypatch: pytest.MonkeyPatch)
     assert len(inspections) == 1
     assert inspections[0].run_id == 102
     assert inspections[0].run_attempt == 2
+
+
+def test_inspect_recent_runs_filters_artifacts_by_name(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=1&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                }
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/101/artifacts?per_page=100": {
+            "artifacts": [
+                {
+                    "name": "bundle.zip",
+                    "size_in_bytes": 100,
+                    "expired": False,
+                    "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip",
+                    "content_type": "application/zip",
+                },
+                {
+                    "name": "coverage-summary.json",
+                    "size_in_bytes": 200,
+                    "expired": False,
+                    "archive_download_url": "https://example.invalid/summary.json",
+                    "content_type": "application/json",
+                },
+            ]
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        artifact_name_filter="summary",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].total_artifacts == 1
+    assert inspections[0].direct_file_artifacts == 1
+    assert inspections[0].zip_artifacts == 0
 
 
 def test_inspect_recent_runs_filters_by_status(monkeypatch: pytest.MonkeyPatch):
@@ -1965,6 +2063,41 @@ def test_recent_runs_markdown_report_mentions_attempt_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "attempt = 2" in report
+
+
+def test_recent_runs_markdown_report_mentions_artifact_name_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        artifact_name_filter="summary",
+    )
+
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "artifact name contains 'summary'" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

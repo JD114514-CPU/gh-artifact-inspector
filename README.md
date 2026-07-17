@@ -29,6 +29,7 @@
 - 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
+- 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
@@ -89,6 +90,12 @@ gh-artifact-inspector --from-file tests/fixtures/artifacts.json --markdown
 
 ```bash
 gh-artifact-inspector --from-file tests/fixtures/artifacts.json --json-report
+```
+
+如果同一个 run 里 artifact 很多，但你只想盯住某个名字：
+
+```bash
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --artifact-name summary --json
 ```
 
 如果想直接生成一段更完整的 Markdown 报告，包含来源和汇总要点：
@@ -188,6 +195,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --attempt 2 --markdown-
 ```
 
 这里的 `--attempt` 会按 workflow run 的 `run_attempt` 做精确整数匹配，适合单独排查“只有重试时才出现的 artifact 问题”。
+
+如果你只想看最近多次 run 里某个特定名字的 artifact：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --artifact-name coverage --markdown-report
+```
+
+这里的 `--artifact-name` 会按 artifact 名称做大小写不敏感的包含匹配；在 `--recent-runs` 模式下，各 run 的 artifact 统计会只基于命中的 artifact 重新计算。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 

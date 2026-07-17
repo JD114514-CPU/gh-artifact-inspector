@@ -144,6 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose run attempt exactly matches this integer.",
     )
     parser.add_argument(
+        "--artifact-name",
+        help="Only keep artifacts whose name contains this case-insensitive text. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -380,6 +384,22 @@ def attempt_matches_filter(run: dict[str, Any], attempt_filter: int | None) -> b
         return False
 
 
+def artifact_name_matches_filter(name: str, artifact_name_filter: str | None) -> bool:
+    if not artifact_name_filter:
+        return True
+    return artifact_name_filter.lower() in name.lower()
+
+
+def filter_summaries_by_artifact_name(
+    summaries: list[ArtifactSummary], artifact_name_filter: str | None
+) -> list[ArtifactSummary]:
+    return [
+        summary
+        for summary in summaries
+        if artifact_name_matches_filter(summary.name, artifact_name_filter)
+    ]
+
+
 def fetch_recent_runs(
     repo: str,
     limit: int,
@@ -505,10 +525,12 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
     else:
         repo, run_id = resolve_run_target(args)
         source_label = f"GitHub Actions run `{repo}` / `{run_id}`"
+    artifact_name_filter = getattr(args, "artifact_name", None)
+    artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
 
     return ReportContext(
-        source_label=source_label,
-        total_artifacts=int(payload.get("total_count") or len(summaries)),
+        source_label=f"{source_label}{artifact_name_suffix}",
+        total_artifacts=len(summaries),
         expired_artifacts=sum(1 for summary in summaries if summary.expired),
         zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
         direct_file_artifacts=sum(1 for summary in summaries if summary.archive_kind == "direct-file"),
@@ -529,6 +551,7 @@ def inspect_recent_runs(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    artifact_name_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -549,6 +572,7 @@ def inspect_recent_runs(
         artifacts_url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs/{run_id}/artifacts?per_page=100"
         payload = request_json(artifacts_url, headers=headers)
         summaries = summarize_payload(payload, headers=headers, probe_download=probe_download)
+        summaries = filter_summaries_by_artifact_name(summaries, artifact_name_filter)
         strict_failures = collect_strict_failures(summaries)
         inspections.append(
             RecentRunInspection(
@@ -560,7 +584,7 @@ def inspect_recent_runs(
                 conclusion=str(run.get("conclusion")) if run.get("conclusion") is not None else None,
                 html_url=str(run.get("html_url")) if run.get("html_url") is not None else None,
                 created_at=str(run.get("created_at")) if run.get("created_at") is not None else None,
-                total_artifacts=int(payload.get("total_count") or len(summaries)),
+                total_artifacts=len(summaries),
                 expired_artifacts=sum(1 for summary in summaries if summary.expired),
                 zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
                 direct_file_artifacts=sum(1 for summary in summaries if summary.archive_kind == "direct-file"),
@@ -597,6 +621,7 @@ def build_recent_runs_context(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    artifact_name_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
@@ -607,10 +632,11 @@ def build_recent_runs_context(
     status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
     actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
     attempt_suffix = f"; attempt = {attempt_filter}" if attempt_filter is not None else ""
+    artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{artifact_name_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1034,6 +1060,7 @@ def main(argv: list[str] | None = None) -> int:
             status_filter=args.status,
             actor_filter=args.actor,
             attempt_filter=args.attempt,
+            artifact_name_filter=args.artifact_name,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -1050,6 +1077,7 @@ def main(argv: list[str] | None = None) -> int:
             status_filter=args.status,
             actor_filter=args.actor,
             attempt_filter=args.attempt,
+            artifact_name_filter=args.artifact_name,
         )
 
         if args.json:
@@ -1076,6 +1104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = read_payload(args)
     summaries = summarize_payload(payload, headers=headers, probe_download=args.probe_download)
+    summaries = filter_summaries_by_artifact_name(summaries, args.artifact_name)
 
     if args.emit_script:
         assert args.output_dir is not None
