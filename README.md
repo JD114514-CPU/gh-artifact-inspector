@@ -29,6 +29,7 @@
 - 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
+- 支持 `--recent-runs N --created-after 2026-07-17`，只看某个时间点之后的 runs，便于把发布前后、某次修复之后或某一段回归窗口单独拉出来
 - 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
@@ -155,6 +156,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --head-sha 44e5d386 --m
 ```
 
 这里的 `--head-sha` 会按 workflow run 的 `head_sha` 做大小写不敏感的包含匹配；终端表格和 Markdown 表格会展示 12 位短 SHA，JSON 报告保留完整 SHA，适合直接对齐某次 commit 或 release 前后的 run。
+
+如果你只想看某个时间点之后创建的 runs：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 50 --created-after 2026-07-17 --markdown-report
+```
+
+这里的 `--created-after` 接受 `YYYY-MM-DD` 或 ISO-8601 时间戳（例如 `2026-07-17T08:00:00Z`），并按 `created_at >= 过滤值` 筛选，适合只看某次发布、回滚或修复之后的 artifact 行为。
 
 如果同一个仓库同时有 `push`、`pull_request`、`schedule` 等多种触发方式，但你只想看其中一类：
 

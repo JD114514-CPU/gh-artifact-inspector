@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -144,6 +145,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose run attempt exactly matches this integer.",
     )
     parser.add_argument(
+        "--created-after",
+        help="When used with --recent-runs, only inspect workflow runs whose created_at is on or after this date or timestamp, for example 2026-07-17 or 2026-07-17T08:00:00Z.",
+    )
+    parser.add_argument(
         "--artifact-name",
         help="Only keep artifacts whose name contains this case-insensitive text. Applies to single-run inspection and --recent-runs summaries.",
     )
@@ -216,6 +221,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--actor can only be used together with --recent-runs.")
     if getattr(args, "attempt", None) is not None and args.recent_runs is None:
         raise SystemExit("--attempt can only be used together with --recent-runs.")
+    if getattr(args, "created_after", None) and args.recent_runs is None:
+        raise SystemExit("--created-after can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -384,6 +391,56 @@ def attempt_matches_filter(run: dict[str, Any], attempt_filter: int | None) -> b
         return False
 
 
+def parse_datetime_filter(value: str) -> datetime:
+    normalized = value.strip()
+    if not normalized:
+        raise SystemExit("--created-after cannot be empty.")
+    if len(normalized) == 10:
+        try:
+            return datetime.fromisoformat(normalized).replace(tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise SystemExit(
+                "--created-after must be a date in YYYY-MM-DD form or an ISO-8601 timestamp."
+            ) from exc
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise SystemExit(
+            "--created-after must be a date in YYYY-MM-DD form or an ISO-8601 timestamp."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_run_created_at(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def created_at_matches_filter(run: dict[str, Any], created_after_filter: str | None) -> bool:
+    if not created_after_filter:
+        return True
+    created_at = parse_run_created_at(run.get("created_at"))
+    if created_at is None:
+        return False
+    return created_at >= parse_datetime_filter(created_after_filter)
+
+
 def artifact_name_matches_filter(name: str, artifact_name_filter: str | None) -> bool:
     if not artifact_name_filter:
         return True
@@ -412,6 +469,7 @@ def fetch_recent_runs(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    created_after_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
@@ -426,6 +484,7 @@ def fetch_recent_runs(
             or status_filter
             or actor_filter
             or attempt_filter is not None
+            or created_after_filter
         )
         per_page = min(max(limit, 30), 100) if needs_extra_pages else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
@@ -444,6 +503,7 @@ def fetch_recent_runs(
             and status_matches_filter(run, status_filter)
             and actor_matches_filter(run, actor_filter)
             and attempt_matches_filter(run, attempt_filter)
+            and created_at_matches_filter(run, created_after_filter)
         )
         if len(page_runs) < per_page:
             break
@@ -526,10 +586,12 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
         repo, run_id = resolve_run_target(args)
         source_label = f"GitHub Actions run `{repo}` / `{run_id}`"
     artifact_name_filter = getattr(args, "artifact_name", None)
+    artifact_kind_filter = getattr(args, "artifact_kind", None)
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
+    artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
 
     return ReportContext(
-        source_label=f"{source_label}{artifact_name_suffix}",
+        source_label=f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}",
         total_artifacts=len(summaries),
         expired_artifacts=sum(1 for summary in summaries if summary.expired),
         zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
@@ -551,7 +613,9 @@ def inspect_recent_runs(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    created_after_filter: str | None = None,
     artifact_name_filter: str | None = None,
+    artifact_kind_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -566,13 +630,18 @@ def inspect_recent_runs(
         status_filter=status_filter,
         actor_filter=actor_filter,
         attempt_filter=attempt_filter,
+        created_after_filter=created_after_filter,
     ):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
         artifacts_url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs/{run_id}/artifacts?per_page=100"
         payload = request_json(artifacts_url, headers=headers)
         summaries = summarize_payload(payload, headers=headers, probe_download=probe_download)
-        summaries = filter_summaries_by_artifact_name(summaries, artifact_name_filter)
+        summaries = filter_summaries(
+            summaries,
+            artifact_name_filter=artifact_name_filter,
+            artifact_kind_filter=artifact_kind_filter,
+        )
         strict_failures = collect_strict_failures(summaries)
         inspections.append(
             RecentRunInspection(
@@ -621,7 +690,9 @@ def build_recent_runs_context(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    created_after_filter: str | None = None,
     artifact_name_filter: str | None = None,
+    artifact_kind_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
@@ -632,11 +703,13 @@ def build_recent_runs_context(
     status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
     actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
     attempt_suffix = f"; attempt = {attempt_filter}" if attempt_filter is not None else ""
+    created_after_suffix = f"; created_at >= '{created_after_filter}'" if created_after_filter else ""
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
+    artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{artifact_name_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{artifact_name_suffix}{artifact_kind_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1060,7 +1133,9 @@ def main(argv: list[str] | None = None) -> int:
             status_filter=args.status,
             actor_filter=args.actor,
             attempt_filter=args.attempt,
+            created_after_filter=args.created_after,
             artifact_name_filter=args.artifact_name,
+            artifact_kind_filter=args.artifact_kind,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -1077,7 +1152,9 @@ def main(argv: list[str] | None = None) -> int:
             status_filter=args.status,
             actor_filter=args.actor,
             attempt_filter=args.attempt,
+            created_after_filter=args.created_after,
             artifact_name_filter=args.artifact_name,
+            artifact_kind_filter=args.artifact_kind,
         )
 
         if args.json:
@@ -1104,7 +1181,11 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = read_payload(args)
     summaries = summarize_payload(payload, headers=headers, probe_download=args.probe_download)
-    summaries = filter_summaries_by_artifact_name(summaries, args.artifact_name)
+    summaries = filter_summaries(
+        summaries,
+        artifact_name_filter=args.artifact_name,
+        artifact_kind_filter=args.artifact_kind,
+    )
 
     if args.emit_script:
         assert args.output_dir is not None

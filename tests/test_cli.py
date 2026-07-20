@@ -23,6 +23,7 @@ from gh_artifact_inspector.cli import (
     collect_strict_failures,
     collect_recent_runs_strict_failures,
     conclusion_matches_filter,
+    created_at_matches_filter,
     filter_recent_run_inspections,
     filter_summaries_by_artifact_name,
     format_recent_runs_json_report,
@@ -431,6 +432,27 @@ def test_validate_argument_combinations_rejects_attempt_without_recent_runs():
         validate_argument_combinations(args)
 
 
+def test_validate_argument_combinations_rejects_created_after_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=None,
+        created_after="2026-07-17",
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
 def test_format_markdown_table_escapes_pipe_characters():
     summary = summarize_artifact(
         {
@@ -593,6 +615,22 @@ def test_attempt_matches_filter_uses_exact_integer_match():
     assert attempt_matches_filter(run, 2)
     assert not attempt_matches_filter(run, 1)
     assert not attempt_matches_filter({}, 2)
+
+
+def test_created_at_matches_filter_accepts_date_and_timestamp():
+    run = {"created_at": "2026-07-17T19:00:38Z"}
+
+    assert created_at_matches_filter(run, "2026-07-17")
+    assert created_at_matches_filter(run, "2026-07-17T19:00:38Z")
+    assert not created_at_matches_filter(run, "2026-07-18")
+
+
+def test_created_at_matches_filter_rejects_invalid_filter_value():
+    with pytest.raises(
+        SystemExit,
+        match="--created-after must be a date in YYYY-MM-DD form or an ISO-8601 timestamp.",
+    ):
+        created_at_matches_filter({"created_at": "2026-07-17T19:00:38Z"}, "07/17/2026")
 
 
 def test_artifact_name_matches_filter_uses_case_insensitive_substring():
@@ -1141,6 +1179,65 @@ def test_inspect_recent_runs_filters_by_actor(monkeypatch: pytest.MonkeyPatch):
     assert len(inspections) == 1
     assert inspections[0].run_id == 102
     assert inspections[0].actor == "dependabot[bot]"
+
+
+def test_inspect_recent_runs_filters_by_created_after(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-17T23:59:59Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 12,
+                    "run_attempt": 1,
+                    "display_title": "Nightly",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "schedule",
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-18T00:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "name": "bundle.zip",
+                    "size_in_bytes": 100,
+                    "expired": False,
+                    "archive_download_url": "https://api.github.com/repos/example/project/actions/artifacts/1/zip",
+                    "content_type": "application/zip",
+                }
+            ],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        created_after_filter="2026-07-18",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 102
 
 
 def test_inspect_recent_runs_filters_by_attempt(monkeypatch: pytest.MonkeyPatch):
@@ -2063,6 +2160,40 @@ def test_recent_runs_markdown_report_mentions_attempt_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "attempt = 2" in report
+
+
+def test_recent_runs_markdown_report_mentions_created_after_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-18T00:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        created_after_filter="2026-07-18",
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "created_at >= '2026-07-18'" in report
 
 
 def test_recent_runs_markdown_report_mentions_artifact_name_filter():
