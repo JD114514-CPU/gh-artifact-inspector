@@ -153,6 +153,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only keep artifacts whose name contains this case-insensitive text. Applies to single-run inspection and --recent-runs summaries.",
     )
     parser.add_argument(
+        "--artifact-kind",
+        choices=("zip", "direct-file", "unknown"),
+        help="Only keep artifacts whose inferred archive kind matches this value. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -447,6 +452,12 @@ def artifact_name_matches_filter(name: str, artifact_name_filter: str | None) ->
     return artifact_name_filter.lower() in name.lower()
 
 
+def artifact_kind_matches_filter(archive_kind: str, artifact_kind_filter: str | None) -> bool:
+    if not artifact_kind_filter:
+        return True
+    return archive_kind.lower() == artifact_kind_filter.lower()
+
+
 def filter_summaries_by_artifact_name(
     summaries: list[ArtifactSummary], artifact_name_filter: str | None
 ) -> list[ArtifactSummary]:
@@ -454,6 +465,20 @@ def filter_summaries_by_artifact_name(
         summary
         for summary in summaries
         if artifact_name_matches_filter(summary.name, artifact_name_filter)
+    ]
+
+
+def filter_summaries(
+    summaries: list[ArtifactSummary],
+    *,
+    artifact_name_filter: str | None = None,
+    artifact_kind_filter: str | None = None,
+) -> list[ArtifactSummary]:
+    return [
+        summary
+        for summary in summaries
+        if artifact_name_matches_filter(summary.name, artifact_name_filter)
+        and artifact_kind_matches_filter(summary.archive_kind, artifact_kind_filter)
     ]
 
 

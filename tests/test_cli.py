@@ -699,6 +699,31 @@ def test_cli_emits_filtered_json_from_fixture():
     assert [item["name"] for item in payload] == ["coverage-summary.json"]
 
 
+def test_cli_emits_kind_filtered_json_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--artifact-kind",
+            "direct-file",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["coverage-summary.json"]
+
+
 def test_cli_strict_fails_when_fixture_contains_expired_artifact():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -1342,6 +1367,62 @@ def test_inspect_recent_runs_filters_artifacts_by_name(monkeypatch: pytest.Monke
         headers={},
         probe_download=False,
         artifact_name_filter="summary",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].total_artifacts == 1
+    assert inspections[0].direct_file_artifacts == 1
+    assert inspections[0].zip_artifacts == 0
+
+
+def test_inspect_recent_runs_filters_artifacts_by_kind(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=1&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                }
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/101/artifacts?per_page=100": {
+            "artifacts": [
+                {
+                    "name": "bundle.zip",
+                    "size_in_bytes": 100,
+                    "expired": False,
+                    "archive_download_url": "https://api.github.com/repos/example/repo/actions/artifacts/1/zip",
+                    "content_type": "application/zip",
+                },
+                {
+                    "name": "coverage-summary.json",
+                    "size_in_bytes": 200,
+                    "expired": False,
+                    "archive_download_url": "https://example.invalid/summary.json",
+                    "content_type": "application/json",
+                },
+            ]
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        artifact_kind_filter="direct-file",
     )
 
     assert len(inspections) == 1
@@ -2229,6 +2310,41 @@ def test_recent_runs_markdown_report_mentions_artifact_name_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "artifact name contains 'summary'" in report
+
+
+def test_recent_runs_markdown_report_mentions_artifact_kind_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        artifact_kind_filter="direct-file",
+    )
+
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "artifact kind = 'direct-file'" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):
