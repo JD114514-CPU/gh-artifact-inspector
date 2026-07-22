@@ -24,6 +24,7 @@ from gh_artifact_inspector.cli import (
     collect_recent_runs_strict_failures,
     conclusion_matches_filter,
     created_at_matches_filter,
+    download_strategy_matches_filter,
     filter_recent_run_inspections,
     filter_summaries_by_artifact_name,
     format_recent_runs_json_report,
@@ -648,6 +649,11 @@ def test_filter_summaries_by_artifact_name_keeps_only_matching_rows():
     assert [summary.name for summary in filtered] == ["coverage-summary.json"]
 
 
+def test_download_strategy_matches_filter_uses_case_insensitive_exact_match():
+    assert download_strategy_matches_filter("download-as-is", "DOWNLOAD-AS-IS")
+    assert not download_strategy_matches_filter("download-and-unzip", "download-as-is")
+
+
 def test_cli_emits_json_report_from_fixture():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -711,6 +717,31 @@ def test_cli_emits_kind_filtered_json_from_fixture():
             str(FIXTURE),
             "--artifact-kind",
             "direct-file",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["coverage-summary.json"]
+
+
+def test_cli_emits_download_strategy_filtered_json_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--download-strategy",
+            "download-as-is",
             "--json",
         ],
         check=True,
@@ -2345,6 +2376,41 @@ def test_recent_runs_markdown_report_mentions_artifact_kind_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "artifact kind = 'direct-file'" in report
+
+
+def test_recent_runs_markdown_report_mentions_download_strategy_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        download_strategy_filter="download-as-is",
+    )
+
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "download strategy = 'download-as-is'" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

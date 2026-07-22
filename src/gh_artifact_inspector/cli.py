@@ -5,7 +5,7 @@ import json
 import os
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -149,6 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose created_at is on or after this date or timestamp, for example 2026-07-17 or 2026-07-17T08:00:00Z.",
     )
     parser.add_argument(
+        "--created-before",
+        help="When used with --recent-runs, only inspect workflow runs whose created_at is on or before this date or timestamp, for example 2026-07-20 or 2026-07-20T18:30:00Z.",
+    )
+    parser.add_argument(
         "--artifact-name",
         help="Only keep artifacts whose name contains this case-insensitive text. Applies to single-run inspection and --recent-runs summaries.",
     )
@@ -156,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--artifact-kind",
         choices=("zip", "direct-file", "unknown"),
         help="Only keep artifacts whose inferred archive kind matches this value. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
+        "--download-strategy",
+        choices=("download-and-unzip", "download-as-is", "manual-check", "unavailable"),
+        help="Only keep artifacts whose recommended consumption action matches this value. Applies to single-run inspection and --recent-runs summaries.",
     )
     parser.add_argument(
         "--github-token",
@@ -228,6 +237,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--attempt can only be used together with --recent-runs.")
     if getattr(args, "created_after", None) and args.recent_runs is None:
         raise SystemExit("--created-after can only be used together with --recent-runs.")
+    if getattr(args, "created_before", None) and args.recent_runs is None:
+        raise SystemExit("--created-before can only be used together with --recent-runs.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -396,16 +407,16 @@ def attempt_matches_filter(run: dict[str, Any], attempt_filter: int | None) -> b
         return False
 
 
-def parse_datetime_filter(value: str) -> datetime:
+def parse_datetime_filter(value: str, flag_name: str) -> datetime:
     normalized = value.strip()
     if not normalized:
-        raise SystemExit("--created-after cannot be empty.")
+        raise SystemExit(f"{flag_name} cannot be empty.")
     if len(normalized) == 10:
         try:
             return datetime.fromisoformat(normalized).replace(tzinfo=timezone.utc)
         except ValueError as exc:
             raise SystemExit(
-                "--created-after must be a date in YYYY-MM-DD form or an ISO-8601 timestamp."
+                f"{flag_name} must be a date in YYYY-MM-DD form or an ISO-8601 timestamp."
             ) from exc
     if normalized.endswith("Z"):
         normalized = f"{normalized[:-1]}+00:00"
@@ -413,7 +424,7 @@ def parse_datetime_filter(value: str) -> datetime:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as exc:
         raise SystemExit(
-            "--created-after must be a date in YYYY-MM-DD form or an ISO-8601 timestamp."
+            f"{flag_name} must be a date in YYYY-MM-DD form or an ISO-8601 timestamp."
         ) from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -437,13 +448,24 @@ def parse_run_created_at(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def created_at_matches_filter(run: dict[str, Any], created_after_filter: str | None) -> bool:
-    if not created_after_filter:
+def created_at_matches_filter(
+    run: dict[str, Any],
+    created_after_filter: str | None,
+    created_before_filter: str | None = None,
+) -> bool:
+    if not created_after_filter and not created_before_filter:
         return True
     created_at = parse_run_created_at(run.get("created_at"))
     if created_at is None:
         return False
-    return created_at >= parse_datetime_filter(created_after_filter)
+    if created_after_filter and created_at < parse_datetime_filter(created_after_filter, "--created-after"):
+        return False
+    if created_before_filter:
+        created_before = parse_datetime_filter(created_before_filter, "--created-before")
+        if len(created_before_filter.strip()) == 10:
+            return created_at < created_before + timedelta(days=1)
+        return created_at <= created_before
+    return True
 
 
 def artifact_name_matches_filter(name: str, artifact_name_filter: str | None) -> bool:
@@ -456,6 +478,12 @@ def artifact_kind_matches_filter(archive_kind: str, artifact_kind_filter: str | 
     if not artifact_kind_filter:
         return True
     return archive_kind.lower() == artifact_kind_filter.lower()
+
+
+def download_strategy_matches_filter(download_strategy: str, download_strategy_filter: str | None) -> bool:
+    if not download_strategy_filter:
+        return True
+    return download_strategy.lower() == download_strategy_filter.lower()
 
 
 def filter_summaries_by_artifact_name(
@@ -473,12 +501,14 @@ def filter_summaries(
     *,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
+    download_strategy_filter: str | None = None,
 ) -> list[ArtifactSummary]:
     return [
         summary
         for summary in summaries
         if artifact_name_matches_filter(summary.name, artifact_name_filter)
         and artifact_kind_matches_filter(summary.archive_kind, artifact_kind_filter)
+        and download_strategy_matches_filter(summary.download_strategy, download_strategy_filter)
     ]
 
 
@@ -495,6 +525,7 @@ def fetch_recent_runs(
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
     created_after_filter: str | None = None,
+    created_before_filter: str | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
@@ -510,6 +541,7 @@ def fetch_recent_runs(
             or actor_filter
             or attempt_filter is not None
             or created_after_filter
+            or created_before_filter
         )
         per_page = min(max(limit, 30), 100) if needs_extra_pages else min(limit - len(runs), 100)
         url = f"https://api.github.com/repos/{owner}/{repo_name}/actions/runs?per_page={per_page}&page={page}"
@@ -528,7 +560,7 @@ def fetch_recent_runs(
             and status_matches_filter(run, status_filter)
             and actor_matches_filter(run, actor_filter)
             and attempt_matches_filter(run, attempt_filter)
-            and created_at_matches_filter(run, created_after_filter)
+            and created_at_matches_filter(run, created_after_filter, created_before_filter)
         )
         if len(page_runs) < per_page:
             break
@@ -612,11 +644,15 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
         source_label = f"GitHub Actions run `{repo}` / `{run_id}`"
     artifact_name_filter = getattr(args, "artifact_name", None)
     artifact_kind_filter = getattr(args, "artifact_kind", None)
+    download_strategy_filter = getattr(args, "download_strategy", None)
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
+    download_strategy_suffix = (
+        f"; download strategy = '{download_strategy_filter}'" if download_strategy_filter else ""
+    )
 
     return ReportContext(
-        source_label=f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}",
+        source_label=f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}",
         total_artifacts=len(summaries),
         expired_artifacts=sum(1 for summary in summaries if summary.expired),
         zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
@@ -641,6 +677,7 @@ def inspect_recent_runs(
     created_after_filter: str | None = None,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
+    download_strategy_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -666,6 +703,7 @@ def inspect_recent_runs(
             summaries,
             artifact_name_filter=artifact_name_filter,
             artifact_kind_filter=artifact_kind_filter,
+            download_strategy_filter=download_strategy_filter,
         )
         strict_failures = collect_strict_failures(summaries)
         inspections.append(
@@ -718,6 +756,7 @@ def build_recent_runs_context(
     created_after_filter: str | None = None,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
+    download_strategy_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
@@ -731,10 +770,13 @@ def build_recent_runs_context(
     created_after_suffix = f"; created_at >= '{created_after_filter}'" if created_after_filter else ""
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
+    download_strategy_suffix = (
+        f"; download strategy = '{download_strategy_filter}'" if download_strategy_filter else ""
+    )
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{artifact_name_suffix}{artifact_kind_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1161,6 +1203,7 @@ def main(argv: list[str] | None = None) -> int:
             created_after_filter=args.created_after,
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
+            download_strategy_filter=args.download_strategy,
         )
         inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
         context = build_recent_runs_context(
@@ -1180,6 +1223,7 @@ def main(argv: list[str] | None = None) -> int:
             created_after_filter=args.created_after,
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
+            download_strategy_filter=args.download_strategy,
         )
 
         if args.json:
@@ -1210,6 +1254,7 @@ def main(argv: list[str] | None = None) -> int:
         summaries,
         artifact_name_filter=args.artifact_name,
         artifact_kind_filter=args.artifact_kind,
+        download_strategy_filter=args.download_strategy,
     )
 
     if args.emit_script:

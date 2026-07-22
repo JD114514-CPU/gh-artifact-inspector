@@ -32,6 +32,7 @@
 - 支持 `--recent-runs N --created-after 2026-07-17`，只看某个时间点之后的 runs，便于把发布前后、某次修复之后或某一段回归窗口单独拉出来
 - 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
 - 支持 `--artifact-kind direct-file`，只看某一类包装判断结果，便于快速聚焦“直接消费”“先 unzip”或“仍需人工判断”的 artifact
+- 支持 `--download-strategy download-as-is`，直接按建议消费动作筛选 artifact，便于把“直接下载就能用”“必须先解压”或“仍需人工确认”的结果拆开看
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
@@ -221,6 +222,14 @@ gh-artifact-inspector --from-file tests/fixtures/artifacts.json --artifact-kind 
 ```
 
 这里的 `--artifact-kind` 支持 `zip`、`direct-file` 和 `unknown`；在单次 run 和 `--recent-runs` 模式下，统计都会只基于命中的这一类 artifact 重新计算。
+
+如果你更关心“这个 artifact 到底该怎么消费”，而不是它被推断成哪一类包装：
+
+```bash
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --download-strategy download-as-is --markdown
+```
+
+这里的 `--download-strategy` 支持 `download-and-unzip`、`download-as-is`、`manual-check` 和 `unavailable`；在单次 run 和 `--recent-runs` 模式下，统计都会只基于命中的消费动作重新计算。
 
 如果你只想盯住“真的需要处理”的 runs，而不是把正常 runs 也混进日报：
 
