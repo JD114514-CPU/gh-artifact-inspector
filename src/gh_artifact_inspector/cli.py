@@ -675,6 +675,7 @@ def inspect_recent_runs(
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
     created_after_filter: str | None = None,
+    created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
     download_strategy_filter: str | None = None,
@@ -693,6 +694,7 @@ def inspect_recent_runs(
         actor_filter=actor_filter,
         attempt_filter=attempt_filter,
         created_after_filter=created_after_filter,
+        created_before_filter=created_before_filter,
     ):
         run_id = int(run.get("id") or 0)
         owner, repo_name = split_repo(repo)
@@ -754,6 +756,7 @@ def build_recent_runs_context(
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
     created_after_filter: str | None = None,
+    created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
     download_strategy_filter: str | None = None,
@@ -768,6 +771,13 @@ def build_recent_runs_context(
     actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
     attempt_suffix = f"; attempt = {attempt_filter}" if attempt_filter is not None else ""
     created_after_suffix = f"; created_at >= '{created_after_filter}'" if created_after_filter else ""
+    created_before_suffix = (
+        f"; created_at <= end of '{created_before_filter}'"
+        if created_before_filter and len(created_before_filter.strip()) == 10
+        else f"; created_at <= '{created_before_filter}'"
+        if created_before_filter
+        else ""
+    )
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
     download_strategy_suffix = (
@@ -776,7 +786,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1201,6 +1211,7 @@ def main(argv: list[str] | None = None) -> int:
             actor_filter=args.actor,
             attempt_filter=args.attempt,
             created_after_filter=args.created_after,
+            created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
             download_strategy_filter=args.download_strategy,
@@ -1221,6 +1232,7 @@ def main(argv: list[str] | None = None) -> int:
             actor_filter=args.actor,
             attempt_filter=args.attempt,
             created_after_filter=args.created_after,
+            created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
             download_strategy_filter=args.download_strategy,

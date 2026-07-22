@@ -30,6 +30,7 @@
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
 - 支持 `--recent-runs N --created-after 2026-07-17`，只看某个时间点之后的 runs，便于把发布前后、某次修复之后或某一段回归窗口单独拉出来
+- 支持 `--recent-runs N --created-before 2026-07-20`，只看某个时间点之前的 runs，便于给回归窗口补上结束边界，或只复盘某次发布之前的 artifact 行为
 - 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
 - 支持 `--artifact-kind direct-file`，只看某一类包装判断结果，便于快速聚焦“直接消费”“先 unzip”或“仍需人工判断”的 artifact
 - 支持 `--download-strategy download-as-is`，直接按建议消费动作筛选 artifact，便于把“直接下载就能用”“必须先解压”或“仍需人工确认”的结果拆开看
@@ -166,6 +167,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 50 --created-after 2026-07
 ```
 
 这里的 `--created-after` 接受 `YYYY-MM-DD` 或 ISO-8601 时间戳（例如 `2026-07-17T08:00:00Z`），并按 `created_at >= 过滤值` 筛选，适合只看某次发布、回滚或修复之后的 artifact 行为。
+
+如果你只想看某个时间点之前创建的 runs：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 50 --created-before 2026-07-20 --markdown-report
+```
+
+这里的 `--created-before` 也接受 `YYYY-MM-DD` 或 ISO-8601 时间戳；如果传日期，会按该 UTC 日期的整天结束时间筛选，适合给排查窗口补上“结束边界”，或者只看某次发布之前的 artifact 行为。
 
 如果同一个仓库同时有 `push`、`pull_request`、`schedule` 等多种触发方式，但你只想看其中一类：
 
