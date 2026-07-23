@@ -35,6 +35,7 @@
 - 支持 `--artifact-kind direct-file`，只看某一类包装判断结果，便于快速聚焦“直接消费”“先 unzip”或“仍需人工判断”的 artifact
 - 支持 `--download-strategy download-as-is`，直接按建议消费动作筛选 artifact，便于把“直接下载就能用”“必须先解压”或“仍需人工确认”的结果拆开看
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
+- 支持 `--recent-runs N --artifacts-only`，只保留仍然命中至少 1 个 artifact 的 runs，适合先做 artifact 级筛选，再把 0 命中噪音从报告里剔掉
 - `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
@@ -247,6 +248,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --strict-only --markdow
 ```
 
 这会保留带有 strict failure 的 runs，并在报告里同时写出“总共扫描了多少 run”和“最终保留了多少 run”。
+
+如果你已经用了 `--artifact-name`、`--artifact-kind` 或 `--download-strategy`，并且只想保留真正命中 artifact 的 runs：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --download-strategy download-as-is --artifacts-only --markdown-report
+```
+
+这会在 artifact 过滤条件跑完之后，剔除“0 个匹配 artifact”的 run；适合把最近 runs 报告从“整屏 0 命中”收敛到真正值得看的 workflow runs。
 
 ## 输出示例
 

@@ -291,6 +291,21 @@ def test_validate_argument_combinations_rejects_strict_only_without_recent_runs(
         validate_argument_combinations(args)
 
 
+def test_validate_argument_combinations_rejects_artifacts_only_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        artifacts_only=True,
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
 def test_validate_argument_combinations_rejects_workflow_without_recent_runs():
     args = argparse.Namespace(
         repo="example/project",
@@ -473,6 +488,31 @@ def test_validate_argument_combinations_rejects_created_before_without_recent_ru
     )
 
     with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
+def test_validate_argument_combinations_rejects_inverted_created_at_window():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=10,
+        strict_only=False,
+        workflow=None,
+        branch=None,
+        head_sha=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=None,
+        created_after="2026-07-21",
+        created_before="2026-07-20",
+        artifacts_only=False,
+    )
+
+    with pytest.raises(SystemExit, match="--created-after cannot be later than --created-before."):
         validate_argument_combinations(args)
 
 
@@ -1787,6 +1827,47 @@ def test_filter_recent_run_inspections_keeps_only_strict_failures():
     assert [inspection.run_id for inspection in filtered] == [102]
 
 
+def test_filter_recent_run_inspections_can_keep_only_runs_with_matching_artifacts():
+    inspections = [
+        RecentRunInspection(
+            run_id=101,
+            run_number=11,
+            run_attempt=1,
+            title="CI",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/101",
+            created_at="2026-07-14T08:00:00Z",
+            total_artifacts=0,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+    ]
+
+    filtered = filter_recent_run_inspections(inspections, strict_only=False, artifacts_only=True)
+
+    assert [inspection.run_id for inspection in filtered] == [102]
+
+
 def test_recent_runs_markdown_report_includes_summary_and_failures():
     inspections = [
         RecentRunInspection(
@@ -2101,6 +2182,40 @@ def test_recent_runs_markdown_report_shows_filtered_count_when_strict_only():
 
     assert "strict failures only" in report
     assert "- Runs scanned: 2" in report
+    assert "- Runs included: 1" in report
+
+
+def test_recent_runs_markdown_report_mentions_artifacts_only_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=3,
+        artifacts_only=True,
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "runs with matching artifacts only" in report
+    assert "- Runs scanned: 3" in report
     assert "- Runs included: 1" in report
 
 

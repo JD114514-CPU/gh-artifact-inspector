@@ -112,6 +112,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, keep only runs whose artifact inspection has strict failures.",
     )
     parser.add_argument(
+        "--artifacts-only",
+        action="store_true",
+        help="When used with --recent-runs, keep only runs that still have at least one matching artifact after filters.",
+    )
+    parser.add_argument(
         "--workflow",
         help="When used with --recent-runs, only inspect workflow runs whose title contains this case-insensitive text.",
     )
@@ -219,6 +224,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--from-file cannot be combined with --repo, --run-id, or --run-url.")
     if args.strict_only and args.recent_runs is None:
         raise SystemExit("--strict-only can only be used together with --recent-runs.")
+    if getattr(args, "artifacts_only", False) and args.recent_runs is None:
+        raise SystemExit("--artifacts-only can only be used together with --recent-runs.")
     if args.workflow and args.recent_runs is None:
         raise SystemExit("--workflow can only be used together with --recent-runs.")
     if getattr(args, "branch", None) and args.recent_runs is None:
@@ -239,6 +246,13 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--created-after can only be used together with --recent-runs.")
     if getattr(args, "created_before", None) and args.recent_runs is None:
         raise SystemExit("--created-before can only be used together with --recent-runs.")
+    created_after = getattr(args, "created_after", None)
+    created_before = getattr(args, "created_before", None)
+    if created_after and created_before:
+        created_after_dt = parse_datetime_filter(created_after, "--created-after")
+        created_before_dt = created_before_filter_upper_bound(created_before)
+        if created_after_dt > created_before_dt:
+            raise SystemExit("--created-after cannot be later than --created-before.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -448,6 +462,13 @@ def parse_run_created_at(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def created_before_filter_upper_bound(value: str) -> datetime:
+    created_before = parse_datetime_filter(value, "--created-before")
+    if len(value.strip()) == 10:
+        return created_before + timedelta(days=1)
+    return created_before
+
+
 def created_at_matches_filter(
     run: dict[str, Any],
     created_after_filter: str | None,
@@ -461,9 +482,9 @@ def created_at_matches_filter(
     if created_after_filter and created_at < parse_datetime_filter(created_after_filter, "--created-after"):
         return False
     if created_before_filter:
-        created_before = parse_datetime_filter(created_before_filter, "--created-before")
+        created_before = created_before_filter_upper_bound(created_before_filter)
         if len(created_before_filter.strip()) == 10:
-            return created_at < created_before + timedelta(days=1)
+            return created_at < created_before
         return created_at <= created_before
     return True
 
@@ -733,11 +754,14 @@ def inspect_recent_runs(
 
 
 def filter_recent_run_inspections(
-    inspections: list[RecentRunInspection], *, strict_only: bool
+    inspections: list[RecentRunInspection], *, strict_only: bool, artifacts_only: bool = False
 ) -> list[RecentRunInspection]:
-    if not strict_only:
-        return inspections
-    return [inspection for inspection in inspections if inspection.strict_failures]
+    filtered = inspections
+    if strict_only:
+        filtered = [inspection for inspection in filtered if inspection.strict_failures]
+    if artifacts_only:
+        filtered = [inspection for inspection in filtered if inspection.total_artifacts > 0]
+    return filtered
 
 
 def build_recent_runs_context(
@@ -747,6 +771,7 @@ def build_recent_runs_context(
     *,
     scanned_runs: int | None = None,
     strict_only: bool = False,
+    artifacts_only: bool = False,
     workflow_filter: str | None = None,
     branch_filter: str | None = None,
     head_sha_filter: str | None = None,
@@ -762,6 +787,7 @@ def build_recent_runs_context(
     download_strategy_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
+    artifacts_only_suffix = "; runs with matching artifacts only" if artifacts_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
     branch_suffix = f"; branch contains '{branch_filter}'" if branch_filter else ""
     head_sha_suffix = f"; head_sha contains '{head_sha_filter}'" if head_sha_filter else ""
@@ -786,7 +812,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1216,13 +1242,18 @@ def main(argv: list[str] | None = None) -> int:
             artifact_kind_filter=args.artifact_kind,
             download_strategy_filter=args.download_strategy,
         )
-        inspections = filter_recent_run_inspections(all_inspections, strict_only=args.strict_only)
+        inspections = filter_recent_run_inspections(
+            all_inspections,
+            strict_only=args.strict_only,
+            artifacts_only=args.artifacts_only,
+        )
         context = build_recent_runs_context(
             repo,
             recent_runs,
             inspections,
             scanned_runs=len(all_inspections),
             strict_only=args.strict_only,
+            artifacts_only=args.artifacts_only,
             workflow_filter=args.workflow,
             branch_filter=args.branch,
             head_sha_filter=args.head_sha,
