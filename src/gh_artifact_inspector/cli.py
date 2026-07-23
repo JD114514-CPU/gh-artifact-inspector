@@ -251,7 +251,11 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
     if created_after and created_before:
         created_after_dt = parse_datetime_filter(created_after, "--created-after")
         created_before_dt = created_before_filter_upper_bound(created_before)
-        if created_after_dt > created_before_dt:
+        if (
+            created_after_dt >= created_before_dt
+            if len(created_before.strip()) == 10
+            else created_after_dt > created_before_dt
+        ):
             raise SystemExit("--created-after cannot be later than --created-before.")
 
 
