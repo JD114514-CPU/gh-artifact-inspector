@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from gh_artifact_inspector.cli import (
     actor_matches_filter,
     artifact_name_matches_filter,
+    artifact_size_matches_filter,
     attempt_matches_filter,
     branch_matches_filter,
     build_report_context,
@@ -230,6 +231,33 @@ def test_cli_emits_json_from_fixture():
     payload = json.loads(completed.stdout)
     assert [item["archive_kind"] for item in payload] == ["zip", "direct-file", "unknown"]
     assert payload[2]["download_strategy"] == "unavailable"
+
+
+def test_cli_emits_json_with_artifact_size_filters_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--artifact-min-bytes",
+            "200",
+            "--artifact-max-bytes",
+            "300",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["coverage-summary.json"]
 
 
 def test_parse_run_url_extracts_repo_and_run_id():
@@ -516,6 +544,87 @@ def test_validate_argument_combinations_rejects_inverted_created_at_window():
         validate_argument_combinations(args)
 
 
+def test_validate_argument_combinations_rejects_negative_artifact_min_bytes():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        branch=None,
+        head_sha=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=None,
+        created_after=None,
+        created_before=None,
+        artifacts_only=False,
+        artifact_min_bytes=-1,
+        artifact_max_bytes=None,
+    )
+
+    with pytest.raises(SystemExit, match="--artifact-min-bytes cannot be negative."):
+        validate_argument_combinations(args)
+
+
+def test_validate_argument_combinations_rejects_negative_artifact_max_bytes():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        branch=None,
+        head_sha=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=None,
+        created_after=None,
+        created_before=None,
+        artifacts_only=False,
+        artifact_min_bytes=None,
+        artifact_max_bytes=-1,
+    )
+
+    with pytest.raises(SystemExit, match="--artifact-max-bytes cannot be negative."):
+        validate_argument_combinations(args)
+
+
+def test_validate_argument_combinations_rejects_inverted_artifact_size_window():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        workflow=None,
+        branch=None,
+        head_sha=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=None,
+        created_after=None,
+        created_before=None,
+        artifacts_only=False,
+        artifact_min_bytes=1024,
+        artifact_max_bytes=512,
+    )
+
+    with pytest.raises(SystemExit, match="--artifact-min-bytes cannot be greater than --artifact-max-bytes."):
+        validate_argument_combinations(args)
+
+
 def test_format_markdown_table_escapes_pipe_characters():
     summary = summarize_artifact(
         {
@@ -613,6 +722,35 @@ def test_format_json_report_includes_summary_and_artifacts():
     assert report["strict_failures"] == ["stale-artifact: artifact expired"]
     assert report["artifacts"][1]["name"] == "coverage-summary.json"
     assert report["artifacts"][1]["download_strategy"] == "download-as-is"
+
+
+def test_format_json_report_source_mentions_artifact_size_filters():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    filtered = [summary for summary in summaries if artifact_size_matches_filter(summary.size_in_bytes, 200, 300)]
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=123456789,
+        run_url=None,
+        from_file=None,
+        github_token=None,
+        probe_download=False,
+        json=False,
+        json_report=True,
+        markdown=False,
+        markdown_report=False,
+        artifact_name=None,
+        artifact_kind=None,
+        download_strategy=None,
+        artifact_min_bytes=200,
+        artifact_max_bytes=300,
+    )
+
+    report = format_json_report(build_report_context(args, payload, filtered), filtered)
+
+    assert "artifact size >= 200 bytes" in report["source"]
+    assert "artifact size <= 300 bytes" in report["source"]
+    assert [artifact["name"] for artifact in report["artifacts"]] == ["coverage-summary.json"]
 
 
 def test_collect_strict_failures_reports_expired_and_unknown():
@@ -731,6 +869,13 @@ def test_download_strategy_matches_filter_uses_case_insensitive_exact_match():
     assert not download_strategy_matches_filter("download-and-unzip", "download-as-is")
 
 
+def test_artifact_size_matches_filter_respects_min_and_max_bounds():
+    assert artifact_size_matches_filter(256, 200, 300)
+    assert artifact_size_matches_filter(256, 256, 256)
+    assert not artifact_size_matches_filter(128, 200, None)
+    assert not artifact_size_matches_filter(512, None, 300)
+
+
 def test_cli_emits_json_report_from_fixture():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -830,6 +975,55 @@ def test_cli_emits_download_strategy_filtered_json_from_fixture():
 
     payload = json.loads(completed.stdout)
     assert [item["name"] for item in payload] == ["coverage-summary.json"]
+
+
+def test_cli_emits_artifact_size_filtered_json_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--artifact-min-bytes",
+            "300",
+            "--artifact-max-bytes",
+            "1024",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["bundle.zip", "stale-artifact"]
+
+
+def test_build_report_context_includes_artifact_size_suffixes():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    filtered = [summary for summary in summaries if 300 <= summary.size_in_bytes <= 1024]
+    args = argparse.Namespace(
+        from_file=FIXTURE,
+        repo=None,
+        run_id=None,
+        run_url=None,
+        artifact_name=None,
+        artifact_kind=None,
+        download_strategy=None,
+        artifact_min_bytes=300,
+        artifact_max_bytes=1024,
+    )
+
+    context = build_report_context(args, payload, filtered)
+
+    assert "artifact size >= 300 bytes" in context.source_label
+    assert "artifact size <= 1024 bytes" in context.source_label
 
 
 def test_cli_strict_fails_when_fixture_contains_expired_artifact():
@@ -2656,6 +2850,43 @@ def test_recent_runs_markdown_report_mentions_download_strategy_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "download strategy = 'download-as-is'" in report
+
+
+def test_recent_runs_markdown_report_mentions_artifact_size_filters():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        artifact_min_bytes=200,
+        artifact_max_bytes=300,
+    )
+
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "artifact size >= 200 bytes" in report
+    assert "artifact size <= 300 bytes" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

@@ -172,6 +172,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only keep artifacts whose recommended consumption action matches this value. Applies to single-run inspection and --recent-runs summaries.",
     )
     parser.add_argument(
+        "--artifact-min-bytes",
+        type=int,
+        help="Only keep artifacts whose size_in_bytes is at least this many bytes. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
+        "--artifact-max-bytes",
+        type=int,
+        help="Only keep artifacts whose size_in_bytes is at most this many bytes. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -257,6 +267,18 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
             else created_after_dt > created_before_dt
         ):
             raise SystemExit("--created-after cannot be later than --created-before.")
+    artifact_min_bytes = getattr(args, "artifact_min_bytes", None)
+    artifact_max_bytes = getattr(args, "artifact_max_bytes", None)
+    if artifact_min_bytes is not None and artifact_min_bytes < 0:
+        raise SystemExit("--artifact-min-bytes cannot be negative.")
+    if artifact_max_bytes is not None and artifact_max_bytes < 0:
+        raise SystemExit("--artifact-max-bytes cannot be negative.")
+    if (
+        artifact_min_bytes is not None
+        and artifact_max_bytes is not None
+        and artifact_min_bytes > artifact_max_bytes
+    ):
+        raise SystemExit("--artifact-min-bytes cannot be greater than --artifact-max-bytes.")
 
 
 def read_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -511,6 +533,16 @@ def download_strategy_matches_filter(download_strategy: str, download_strategy_f
     return download_strategy.lower() == download_strategy_filter.lower()
 
 
+def artifact_size_matches_filter(
+    size_in_bytes: int, artifact_min_bytes: int | None, artifact_max_bytes: int | None
+) -> bool:
+    if artifact_min_bytes is not None and size_in_bytes < artifact_min_bytes:
+        return False
+    if artifact_max_bytes is not None and size_in_bytes > artifact_max_bytes:
+        return False
+    return True
+
+
 def filter_summaries_by_artifact_name(
     summaries: list[ArtifactSummary], artifact_name_filter: str | None
 ) -> list[ArtifactSummary]:
@@ -527,6 +559,8 @@ def filter_summaries(
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
     download_strategy_filter: str | None = None,
+    artifact_min_bytes: int | None = None,
+    artifact_max_bytes: int | None = None,
 ) -> list[ArtifactSummary]:
     return [
         summary
@@ -534,6 +568,7 @@ def filter_summaries(
         if artifact_name_matches_filter(summary.name, artifact_name_filter)
         and artifact_kind_matches_filter(summary.archive_kind, artifact_kind_filter)
         and download_strategy_matches_filter(summary.download_strategy, download_strategy_filter)
+        and artifact_size_matches_filter(summary.size_in_bytes, artifact_min_bytes, artifact_max_bytes)
     ]
 
 
@@ -670,14 +705,25 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
     artifact_name_filter = getattr(args, "artifact_name", None)
     artifact_kind_filter = getattr(args, "artifact_kind", None)
     download_strategy_filter = getattr(args, "download_strategy", None)
+    artifact_min_bytes = getattr(args, "artifact_min_bytes", None)
+    artifact_max_bytes = getattr(args, "artifact_max_bytes", None)
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
     download_strategy_suffix = (
         f"; download strategy = '{download_strategy_filter}'" if download_strategy_filter else ""
     )
+    artifact_min_bytes_suffix = (
+        f"; artifact size >= {artifact_min_bytes} bytes" if artifact_min_bytes is not None else ""
+    )
+    artifact_max_bytes_suffix = (
+        f"; artifact size <= {artifact_max_bytes} bytes" if artifact_max_bytes is not None else ""
+    )
 
     return ReportContext(
-        source_label=f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}",
+        source_label=(
+            f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}"
+            f"{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}"
+        ),
         total_artifacts=len(summaries),
         expired_artifacts=sum(1 for summary in summaries if summary.expired),
         zip_artifacts=sum(1 for summary in summaries if summary.archive_kind == "zip"),
@@ -704,6 +750,8 @@ def inspect_recent_runs(
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
     download_strategy_filter: str | None = None,
+    artifact_min_bytes: int | None = None,
+    artifact_max_bytes: int | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -731,6 +779,8 @@ def inspect_recent_runs(
             artifact_name_filter=artifact_name_filter,
             artifact_kind_filter=artifact_kind_filter,
             download_strategy_filter=download_strategy_filter,
+            artifact_min_bytes=artifact_min_bytes,
+            artifact_max_bytes=artifact_max_bytes,
         )
         strict_failures = collect_strict_failures(summaries)
         inspections.append(
@@ -789,6 +839,8 @@ def build_recent_runs_context(
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
     download_strategy_filter: str | None = None,
+    artifact_min_bytes: int | None = None,
+    artifact_max_bytes: int | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     artifacts_only_suffix = "; runs with matching artifacts only" if artifacts_only else ""
@@ -813,10 +865,16 @@ def build_recent_runs_context(
     download_strategy_suffix = (
         f"; download strategy = '{download_strategy_filter}'" if download_strategy_filter else ""
     )
+    artifact_min_bytes_suffix = (
+        f"; artifact size >= {artifact_min_bytes} bytes" if artifact_min_bytes is not None else ""
+    )
+    artifact_max_bytes_suffix = (
+        f"; artifact size <= {artifact_max_bytes} bytes" if artifact_max_bytes is not None else ""
+    )
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifacts_only_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1245,6 +1303,8 @@ def main(argv: list[str] | None = None) -> int:
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
             download_strategy_filter=args.download_strategy,
+            artifact_min_bytes=args.artifact_min_bytes,
+            artifact_max_bytes=args.artifact_max_bytes,
         )
         inspections = filter_recent_run_inspections(
             all_inspections,
@@ -1271,6 +1331,8 @@ def main(argv: list[str] | None = None) -> int:
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
             download_strategy_filter=args.download_strategy,
+            artifact_min_bytes=args.artifact_min_bytes,
+            artifact_max_bytes=args.artifact_max_bytes,
         )
 
         if args.json:
@@ -1302,6 +1364,8 @@ def main(argv: list[str] | None = None) -> int:
         artifact_name_filter=args.artifact_name,
         artifact_kind_filter=args.artifact_kind,
         download_strategy_filter=args.download_strategy,
+        artifact_min_bytes=args.artifact_min_bytes,
+        artifact_max_bytes=args.artifact_max_bytes,
     )
 
     if args.emit_script:
