@@ -29,6 +29,7 @@
 - 支持 `--recent-runs N --status in_progress`，只看某一类运行状态的 runs，便于单独盯住 `queued` / `in_progress` / `completed`
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
+- 支持 `--recent-runs N --run-number 128`，只看某一个 GitHub Actions run number，便于从网页或 issue 里给出的 run 编号直接回查 artifact
 - 支持 `--recent-runs N --created-after 2026-07-17`，只看某个时间点之后的 runs，便于把发布前后、某次修复之后或某一段回归窗口单独拉出来
 - 支持 `--recent-runs N --created-before 2026-07-20`，只看某个时间点之前的 runs，便于给回归窗口补上结束边界，或只复盘某次发布之前的 artifact 行为
 - 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
@@ -217,6 +218,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 20 --attempt 2 --markdown-
 ```
 
 这里的 `--attempt` 会按 workflow run 的 `run_attempt` 做精确整数匹配，适合单独排查“只有重试时才出现的 artifact 问题”。
+
+如果 issue、网页链接或维护者评论里给的是 run number，而不是 run id：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 50 --run-number 128 --markdown-report
+```
+
+这里的 `--run-number` 会按 workflow run 的 `run_number` 做精确整数匹配，适合从 GitHub Actions 页面上可见的编号直接回查对应 artifact，而不用先手动换算成 run id。
 
 如果你只想看最近多次 run 里某个特定名字的 artifact：
 

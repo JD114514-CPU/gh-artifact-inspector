@@ -334,6 +334,34 @@ def test_validate_argument_combinations_rejects_artifacts_only_without_recent_ru
         validate_argument_combinations(args)
 
 
+def test_validate_argument_combinations_rejects_run_number_without_recent_runs():
+    args = argparse.Namespace(
+        repo="example/project",
+        run_id=None,
+        run_url=None,
+        from_file=None,
+        recent_runs=None,
+        strict_only=False,
+        artifacts_only=False,
+        workflow=None,
+        branch=None,
+        head_sha=None,
+        event=None,
+        conclusion=None,
+        status=None,
+        actor=None,
+        attempt=None,
+        run_number=12,
+        created_after=None,
+        created_before=None,
+        artifact_min_bytes=None,
+        artifact_max_bytes=None,
+    )
+
+    with pytest.raises(SystemExit, match="can only be used together with --recent-runs"):
+        validate_argument_combinations(args)
+
+
 def test_validate_argument_combinations_rejects_workflow_without_recent_runs():
     args = argparse.Namespace(
         repo="example/project",
@@ -1680,6 +1708,60 @@ def test_inspect_recent_runs_filters_by_attempt(monkeypatch: pytest.MonkeyPatch)
     assert inspections[0].run_attempt == 2
 
 
+def test_inspect_recent_runs_filters_by_run_number(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "CI",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "actor": {"login": "octocat"},
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 12,
+                    "run_attempt": 1,
+                    "display_title": "CI next run",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "actor": {"login": "octocat"},
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-14T09:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 0,
+            "artifacts": [],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        run_number_filter=12,
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 102
+    assert inspections[0].run_number == 12
+
+
 def test_inspect_recent_runs_filters_artifacts_by_name(monkeypatch: pytest.MonkeyPatch):
     responses = {
         "https://api.github.com/repos/example/project/actions/runs?per_page=1&page=1": {
@@ -2677,6 +2759,40 @@ def test_recent_runs_markdown_report_mentions_attempt_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "attempt = 2" in report
+
+
+def test_recent_runs_markdown_report_mentions_run_number_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=1,
+            direct_file_artifacts=0,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        run_number_filter=12,
+    )
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "run_number = 12" in report
 
 
 def test_recent_runs_markdown_report_mentions_created_after_filter():

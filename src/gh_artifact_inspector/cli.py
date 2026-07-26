@@ -150,6 +150,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose run attempt exactly matches this integer.",
     )
     parser.add_argument(
+        "--run-number",
+        type=int,
+        help="When used with --recent-runs, only inspect workflow runs whose run_number exactly matches this integer.",
+    )
+    parser.add_argument(
         "--created-after",
         help="When used with --recent-runs, only inspect workflow runs whose created_at is on or after this date or timestamp, for example 2026-07-17 or 2026-07-17T08:00:00Z.",
     )
@@ -252,6 +257,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--actor can only be used together with --recent-runs.")
     if getattr(args, "attempt", None) is not None and args.recent_runs is None:
         raise SystemExit("--attempt can only be used together with --recent-runs.")
+    if getattr(args, "run_number", None) is not None and args.recent_runs is None:
+        raise SystemExit("--run-number can only be used together with --recent-runs.")
     if getattr(args, "created_after", None) and args.recent_runs is None:
         raise SystemExit("--created-after can only be used together with --recent-runs.")
     if getattr(args, "created_before", None) and args.recent_runs is None:
@@ -269,6 +276,9 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
             raise SystemExit("--created-after cannot be later than --created-before.")
     artifact_min_bytes = getattr(args, "artifact_min_bytes", None)
     artifact_max_bytes = getattr(args, "artifact_max_bytes", None)
+    run_number = getattr(args, "run_number", None)
+    if run_number is not None and run_number < 1:
+        raise SystemExit("--run-number must be at least 1.")
     if artifact_min_bytes is not None and artifact_min_bytes < 0:
         raise SystemExit("--artifact-min-bytes cannot be negative.")
     if artifact_max_bytes is not None and artifact_max_bytes < 0:
@@ -447,6 +457,18 @@ def attempt_matches_filter(run: dict[str, Any], attempt_filter: int | None) -> b
         return False
 
 
+def run_number_matches_filter(run: dict[str, Any], run_number_filter: int | None) -> bool:
+    if run_number_filter is None:
+        return True
+    run_number = run.get("run_number")
+    if run_number is None:
+        return False
+    try:
+        return int(run_number) == run_number_filter
+    except (TypeError, ValueError):
+        return False
+
+
 def parse_datetime_filter(value: str, flag_name: str) -> datetime:
     normalized = value.strip()
     if not normalized:
@@ -584,6 +606,7 @@ def fetch_recent_runs(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    run_number_filter: int | None = None,
     created_after_filter: str | None = None,
     created_before_filter: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -600,6 +623,7 @@ def fetch_recent_runs(
             or status_filter
             or actor_filter
             or attempt_filter is not None
+            or run_number_filter is not None
             or created_after_filter
             or created_before_filter
         )
@@ -620,6 +644,7 @@ def fetch_recent_runs(
             and status_matches_filter(run, status_filter)
             and actor_matches_filter(run, actor_filter)
             and attempt_matches_filter(run, attempt_filter)
+            and run_number_matches_filter(run, run_number_filter)
             and created_at_matches_filter(run, created_after_filter, created_before_filter)
         )
         if len(page_runs) < per_page:
@@ -745,6 +770,7 @@ def inspect_recent_runs(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    run_number_filter: int | None = None,
     created_after_filter: str | None = None,
     created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
@@ -766,6 +792,7 @@ def inspect_recent_runs(
         status_filter=status_filter,
         actor_filter=actor_filter,
         attempt_filter=attempt_filter,
+        run_number_filter=run_number_filter,
         created_after_filter=created_after_filter,
         created_before_filter=created_before_filter,
     ):
@@ -834,6 +861,7 @@ def build_recent_runs_context(
     status_filter: str | None = None,
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
+    run_number_filter: int | None = None,
     created_after_filter: str | None = None,
     created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
@@ -852,6 +880,7 @@ def build_recent_runs_context(
     status_suffix = f"; status contains '{status_filter}'" if status_filter else ""
     actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
     attempt_suffix = f"; attempt = {attempt_filter}" if attempt_filter is not None else ""
+    run_number_suffix = f"; run_number = {run_number_filter}" if run_number_filter is not None else ""
     created_after_suffix = f"; created_at >= '{created_after_filter}'" if created_after_filter else ""
     created_before_suffix = (
         f"; created_at <= end of '{created_before_filter}'"
@@ -874,7 +903,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifacts_only_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1298,6 +1327,7 @@ def main(argv: list[str] | None = None) -> int:
             status_filter=args.status,
             actor_filter=args.actor,
             attempt_filter=args.attempt,
+            run_number_filter=args.run_number,
             created_after_filter=args.created_after,
             created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
@@ -1326,6 +1356,7 @@ def main(argv: list[str] | None = None) -> int:
             status_filter=args.status,
             actor_filter=args.actor,
             attempt_filter=args.attempt,
+            run_number_filter=args.run_number,
             created_after_filter=args.created_after,
             created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
