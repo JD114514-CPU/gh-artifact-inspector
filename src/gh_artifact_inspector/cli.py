@@ -187,6 +187,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only keep artifacts whose size_in_bytes is at most this many bytes. Applies to single-run inspection and --recent-runs summaries.",
     )
     parser.add_argument(
+        "--artifact-expired",
+        choices=("yes", "no"),
+        help="Only keep artifacts whose expired flag matches this value. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
         "--github-token",
         default=os.getenv("GITHUB_TOKEN"),
         help="GitHub token for higher rate limits and private repositories. Defaults to GITHUB_TOKEN.",
@@ -565,6 +570,13 @@ def artifact_size_matches_filter(
     return True
 
 
+def artifact_expired_matches_filter(expired: bool, artifact_expired_filter: str | None) -> bool:
+    if not artifact_expired_filter:
+        return True
+    expected = artifact_expired_filter.lower() == "yes"
+    return expired is expected
+
+
 def filter_summaries_by_artifact_name(
     summaries: list[ArtifactSummary], artifact_name_filter: str | None
 ) -> list[ArtifactSummary]:
@@ -583,6 +595,7 @@ def filter_summaries(
     download_strategy_filter: str | None = None,
     artifact_min_bytes: int | None = None,
     artifact_max_bytes: int | None = None,
+    artifact_expired_filter: str | None = None,
 ) -> list[ArtifactSummary]:
     return [
         summary
@@ -591,6 +604,7 @@ def filter_summaries(
         and artifact_kind_matches_filter(summary.archive_kind, artifact_kind_filter)
         and download_strategy_matches_filter(summary.download_strategy, download_strategy_filter)
         and artifact_size_matches_filter(summary.size_in_bytes, artifact_min_bytes, artifact_max_bytes)
+        and artifact_expired_matches_filter(summary.expired, artifact_expired_filter)
     ]
 
 
@@ -732,6 +746,7 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
     download_strategy_filter = getattr(args, "download_strategy", None)
     artifact_min_bytes = getattr(args, "artifact_min_bytes", None)
     artifact_max_bytes = getattr(args, "artifact_max_bytes", None)
+    artifact_expired_filter = getattr(args, "artifact_expired", None)
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
     download_strategy_suffix = (
@@ -743,11 +758,14 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
     artifact_max_bytes_suffix = (
         f"; artifact size <= {artifact_max_bytes} bytes" if artifact_max_bytes is not None else ""
     )
+    artifact_expired_suffix = (
+        f"; artifact expired = '{artifact_expired_filter}'" if artifact_expired_filter else ""
+    )
 
     return ReportContext(
         source_label=(
             f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}"
-            f"{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}"
+            f"{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}"
         ),
         total_artifacts=len(summaries),
         expired_artifacts=sum(1 for summary in summaries if summary.expired),
@@ -778,6 +796,7 @@ def inspect_recent_runs(
     download_strategy_filter: str | None = None,
     artifact_min_bytes: int | None = None,
     artifact_max_bytes: int | None = None,
+    artifact_expired_filter: str | None = None,
 ) -> list[RecentRunInspection]:
     inspections: list[RecentRunInspection] = []
     for run in fetch_recent_runs(
@@ -808,6 +827,7 @@ def inspect_recent_runs(
             download_strategy_filter=download_strategy_filter,
             artifact_min_bytes=artifact_min_bytes,
             artifact_max_bytes=artifact_max_bytes,
+            artifact_expired_filter=artifact_expired_filter,
         )
         strict_failures = collect_strict_failures(summaries)
         inspections.append(
@@ -869,6 +889,7 @@ def build_recent_runs_context(
     download_strategy_filter: str | None = None,
     artifact_min_bytes: int | None = None,
     artifact_max_bytes: int | None = None,
+    artifact_expired_filter: str | None = None,
 ) -> RecentRunsContext:
     suffix = "; strict failures only" if strict_only else ""
     artifacts_only_suffix = "; runs with matching artifacts only" if artifacts_only else ""
@@ -900,10 +921,13 @@ def build_recent_runs_context(
     artifact_max_bytes_suffix = (
         f"; artifact size <= {artifact_max_bytes} bytes" if artifact_max_bytes is not None else ""
     )
+    artifact_expired_suffix = (
+        f"; artifact expired = '{artifact_expired_filter}'" if artifact_expired_filter else ""
+    )
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifacts_only_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1335,6 +1359,7 @@ def main(argv: list[str] | None = None) -> int:
             download_strategy_filter=args.download_strategy,
             artifact_min_bytes=args.artifact_min_bytes,
             artifact_max_bytes=args.artifact_max_bytes,
+            artifact_expired_filter=args.artifact_expired,
         )
         inspections = filter_recent_run_inspections(
             all_inspections,
@@ -1364,6 +1389,7 @@ def main(argv: list[str] | None = None) -> int:
             download_strategy_filter=args.download_strategy,
             artifact_min_bytes=args.artifact_min_bytes,
             artifact_max_bytes=args.artifact_max_bytes,
+            artifact_expired_filter=args.artifact_expired,
         )
 
         if args.json:
@@ -1397,6 +1423,7 @@ def main(argv: list[str] | None = None) -> int:
         download_strategy_filter=args.download_strategy,
         artifact_min_bytes=args.artifact_min_bytes,
         artifact_max_bytes=args.artifact_max_bytes,
+        artifact_expired_filter=args.artifact_expired,
     )
 
     if args.emit_script:

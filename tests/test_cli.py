@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gh_artifact_inspector.cli import (
     actor_matches_filter,
+    artifact_expired_matches_filter,
     artifact_name_matches_filter,
     artifact_size_matches_filter,
     attempt_matches_filter,
@@ -27,6 +28,7 @@ from gh_artifact_inspector.cli import (
     created_at_matches_filter,
     download_strategy_matches_filter,
     filter_recent_run_inspections,
+    filter_summaries,
     filter_summaries_by_artifact_name,
     format_recent_runs_json_report,
     format_recent_runs_markdown_table,
@@ -258,6 +260,31 @@ def test_cli_emits_json_with_artifact_size_filters_from_fixture():
 
     payload = json.loads(completed.stdout)
     assert [item["name"] for item in payload] == ["coverage-summary.json"]
+
+
+def test_cli_emits_json_with_artifact_expired_filter_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--artifact-expired",
+            "yes",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["stale-artifact"]
 
 
 def test_parse_run_url_extracts_repo_and_run_id():
@@ -883,6 +910,13 @@ def test_artifact_name_matches_filter_uses_case_insensitive_substring():
     assert not artifact_name_matches_filter("Coverage-Summary.JSON", "bundle")
 
 
+def test_artifact_expired_matches_filter_supports_yes_and_no():
+    assert artifact_expired_matches_filter(True, "yes")
+    assert not artifact_expired_matches_filter(False, "yes")
+    assert artifact_expired_matches_filter(False, "no")
+    assert not artifact_expired_matches_filter(True, "no")
+
+
 def test_filter_summaries_by_artifact_name_keeps_only_matching_rows():
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     summaries = summarize_payload(payload, headers={}, probe_download=False)
@@ -1052,6 +1086,29 @@ def test_build_report_context_includes_artifact_size_suffixes():
 
     assert "artifact size >= 300 bytes" in context.source_label
     assert "artifact size <= 1024 bytes" in context.source_label
+
+
+def test_build_report_context_includes_artifact_expired_suffix():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    filtered = filter_summaries(summaries, artifact_expired_filter="yes")
+    args = argparse.Namespace(
+        from_file=FIXTURE,
+        repo=None,
+        run_id=None,
+        run_url=None,
+        artifact_name=None,
+        artifact_kind=None,
+        download_strategy=None,
+        artifact_min_bytes=None,
+        artifact_max_bytes=None,
+        artifact_expired="yes",
+    )
+
+    context = build_report_context(args, payload, filtered)
+
+    assert "artifact expired = 'yes'" in context.source_label
+    assert [summary.name for summary in filtered] == ["stale-artifact"]
 
 
 def test_cli_strict_fails_when_fixture_contains_expired_artifact():
@@ -3003,6 +3060,41 @@ def test_recent_runs_markdown_report_mentions_artifact_size_filters():
 
     assert "artifact size >= 200 bytes" in report
     assert "artifact size <= 300 bytes" in report
+
+
+def test_recent_runs_markdown_report_mentions_artifact_expired_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=1,
+            zip_artifacts=0,
+            direct_file_artifacts=0,
+            unknown_artifacts=1,
+            strict_failures=["stale-artifact: artifact expired"],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        artifact_expired_filter="yes",
+    )
+
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "artifact expired = 'yes'" in report
 
 
 def test_build_download_actions_uses_report_strategies(tmp_path: Path):

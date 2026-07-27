@@ -36,6 +36,7 @@
 - 支持 `--artifact-kind direct-file`，只看某一类包装判断结果，便于快速聚焦“直接消费”“先 unzip”或“仍需人工判断”的 artifact
 - 支持 `--download-strategy download-as-is`，直接按建议消费动作筛选 artifact，便于把“直接下载就能用”“必须先解压”或“仍需人工确认”的结果拆开看
 - 支持 `--artifact-min-bytes 1048576` / `--artifact-max-bytes 10485760`，按 artifact 体积筛选，便于把超小元数据文件、可疑空产物或超大归档拆开排查
+- 支持 `--artifact-expired yes` / `--artifact-expired no`，按 artifact 是否已过期筛选，便于只看需要重跑 workflow 的旧产物，或只保留仍可直接消费的结果
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - 支持 `--recent-runs N --artifacts-only`，只保留仍然命中至少 1 个 artifact 的 runs，适合先做 artifact 级筛选，再把 0 命中噪音从报告里剔掉
 - `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
@@ -256,6 +257,15 @@ gh-artifact-inspector --from-file tests/fixtures/artifacts.json --artifact-min-b
 ```
 
 这里的 `--artifact-min-bytes` / `--artifact-max-bytes` 会按 `size_in_bytes` 做闭区间筛选；在单次 run 和 `--recent-runs` 模式下，artifact 统计和 strict 结果都会只基于命中的体积范围重新计算。
+
+如果你只想盯住已经过期、需要重跑 workflow 的 artifact，或者反过来只保留仍可直接消费的结果：
+
+```bash
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --artifact-expired yes --markdown
+gh-artifact-inspector --repo owner/name --recent-runs 20 --artifact-expired no --artifacts-only --markdown-report
+```
+
+这里的 `--artifact-expired` 支持 `yes` 和 `no`；在单次 run 和 `--recent-runs` 模式下，artifact 统计、strict 结果以及 `--artifacts-only` 的保留逻辑都会只基于命中的过期状态重新计算。
 
 这里的 `--download-strategy` 支持 `download-and-unzip`、`download-as-is`、`manual-check` 和 `unavailable`；在单次 run 和 `--recent-runs` 模式下，统计都会只基于命中的消费动作重新计算。
 
