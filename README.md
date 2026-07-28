@@ -21,7 +21,7 @@
 - 支持直接从主 CLI 导出 `powershell` / `bash` 下载脚本，不必先手动中转 JSON
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
-- 支持 `--recent-runs N --workflow nightly`，只看某一类 workflow 的最近 runs，避免多流水线仓库噪音
+- 支持 `--recent-runs N --workflow nightly`，只看某个 workflow 名称命中的最近 runs，避免多流水线仓库噪音
 - 支持 `--recent-runs N --branch main`，只看某一条分支上的最近 runs，便于区分主干、发布分支或长期维护分支
 - 支持 `--recent-runs N --head-sha abc123`，只看某个 commit 对应的 runs，便于把同一分支上的不同提交拆开排查
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
@@ -147,7 +147,7 @@ gh-artifact-inspector --repo owner/name --recent-runs 5 --json-report
 gh-artifact-inspector --repo owner/name --recent-runs 10 --workflow nightly --markdown-report
 ```
 
-这里的 `--workflow` 会按 workflow 标题做大小写不敏感的包含匹配，适合只看 `Nightly`、`Release`、`Artifacts` 这类固定名称。
+这里的 `--workflow` 会优先按 GitHub Actions 的 workflow `name` 做大小写不敏感的包含匹配；只有 `name` 缺失时才回退到 run `display_title`。这更适合稳定地只看 `ci`、`Nightly`、`Release`、`Artifacts` 这类固定流水线，而不会被 commit 标题误命中。
 
 如果同一个仓库同时维护 `main`、`release/*` 或长期支持分支，但你只想看其中一条分支：
 

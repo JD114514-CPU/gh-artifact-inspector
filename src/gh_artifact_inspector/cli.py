@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--workflow",
-        help="When used with --recent-runs, only inspect workflow runs whose title contains this case-insensitive text.",
+        help="When used with --recent-runs, only inspect workflow runs whose workflow name contains this case-insensitive text. Falls back to display title when the workflow name is missing.",
     )
     parser.add_argument(
         "--branch",
@@ -395,8 +395,12 @@ def request_json(url: str, headers: dict[str, str]) -> dict[str, Any]:
 def workflow_matches_filter(run: dict[str, Any], workflow_filter: str | None) -> bool:
     if not workflow_filter:
         return True
-    title = str(run.get("display_title") or run.get("name") or "")
-    return workflow_filter.lower() in title.lower()
+    needle = workflow_filter.lower()
+    workflow_name = str(run.get("name") or "")
+    if workflow_name:
+        return needle in workflow_name.lower()
+    display_title = str(run.get("display_title") or "")
+    return needle in display_title.lower()
 
 
 def branch_matches_filter(run: dict[str, Any], branch_filter: str | None) -> bool:

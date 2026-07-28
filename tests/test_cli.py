@@ -1385,12 +1385,18 @@ def test_inspect_recent_runs_summarizes_each_run(monkeypatch: pytest.MonkeyPatch
     assert inspections[1].strict_failures == ["stale-artifact: artifact expired"]
 
 
-def test_workflow_matches_filter_uses_case_insensitive_substring():
-    run = {"display_title": "Nightly Artifact Sweep"}
+def test_workflow_matches_filter_prefers_workflow_name_and_falls_back_to_display_title():
+    run = {"name": "Nightly Artifact Sweep", "display_title": "feat: add branch filter"}
 
     assert workflow_matches_filter(run, "nightly")
     assert workflow_matches_filter(run, "artifact")
+    assert not workflow_matches_filter(run, "branch")
     assert not workflow_matches_filter(run, "release")
+
+    fallback_run = {"display_title": "Nightly Artifact Sweep"}
+
+    assert workflow_matches_filter(fallback_run, "nightly")
+    assert workflow_matches_filter(fallback_run, "artifact")
 
 
 def test_event_matches_filter_uses_case_insensitive_substring():
@@ -1409,7 +1415,7 @@ def test_status_matches_filter_uses_case_insensitive_substring():
     assert not status_matches_filter(run, "completed")
 
 
-def test_inspect_recent_runs_filters_by_workflow_title(monkeypatch: pytest.MonkeyPatch):
+def test_inspect_recent_runs_filters_by_workflow_name(monkeypatch: pytest.MonkeyPatch):
     responses = {
         "https://api.github.com/repos/example/project/actions/runs?per_page=30&page=1": {
             "workflow_runs": [
@@ -1417,7 +1423,8 @@ def test_inspect_recent_runs_filters_by_workflow_title(monkeypatch: pytest.Monke
                     "id": 101,
                     "run_number": 11,
                     "run_attempt": 1,
-                    "display_title": "CI",
+                    "name": "ci",
+                    "display_title": "feat: add branch filter",
                     "status": "completed",
                     "conclusion": "success",
                     "event": "push",
@@ -1428,7 +1435,8 @@ def test_inspect_recent_runs_filters_by_workflow_title(monkeypatch: pytest.Monke
                     "id": 102,
                     "run_number": 12,
                     "run_attempt": 1,
-                    "display_title": "Nightly",
+                    "name": "nightly",
+                    "display_title": "fix: stabilize probe fallback",
                     "status": "completed",
                     "conclusion": "failure",
                     "event": "schedule",
