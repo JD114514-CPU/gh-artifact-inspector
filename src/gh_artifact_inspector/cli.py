@@ -71,6 +71,7 @@ class RecentRunInspection:
     actor: str = "unknown"
     event: str = "unknown"
     head_sha: str | None = None
+    workflow_name: str | None = None
 
 
 @dataclass(slots=True)
@@ -878,6 +879,7 @@ def inspect_recent_runs(
                 actor=run_actor_login(run),
                 event=str(run.get("event") or "unknown"),
                 head_sha=str(run.get("head_sha")) if run.get("head_sha") is not None else None,
+                workflow_name=str(run.get("name")) if run.get("name") is not None else None,
             )
         )
     return inspections
@@ -1208,10 +1210,11 @@ def collect_recent_runs_strict_failures(inspections: list[RecentRunInspection]) 
 def summarize_recent_runs_by_workflow(inspections: list[RecentRunInspection]) -> list[WorkflowSummary]:
     grouped: dict[str, WorkflowSummary] = {}
     for inspection in inspections:
-        summary = grouped.get(inspection.title)
+        workflow_title = inspection.workflow_name or inspection.title
+        summary = grouped.get(workflow_title)
         if summary is None:
             summary = WorkflowSummary(
-                title=inspection.title,
+                title=workflow_title,
                 runs=0,
                 total_artifacts=0,
                 expired_artifacts=0,
@@ -1220,7 +1223,7 @@ def summarize_recent_runs_by_workflow(inspections: list[RecentRunInspection]) ->
                 unknown_artifacts=0,
                 runs_with_failures=0,
             )
-            grouped[inspection.title] = summary
+            grouped[workflow_title] = summary
 
         summary.runs += 1
         summary.total_artifacts += inspection.total_artifacts

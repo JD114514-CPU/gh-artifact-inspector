@@ -1473,6 +1473,8 @@ def test_inspect_recent_runs_filters_by_workflow_name(monkeypatch: pytest.Monkey
 
     assert len(inspections) == 1
     assert inspections[0].run_id == 102
+    assert inspections[0].workflow_name == "nightly"
+    assert inspections[0].title == "fix: stabilize probe fallback"
 
 
 def test_inspect_recent_runs_filters_by_head_sha(monkeypatch: pytest.MonkeyPatch):
@@ -2433,18 +2435,19 @@ def test_recent_runs_json_report_includes_summary_and_run_rows():
     assert report["runs"][0]["actor"] == "unknown"
     assert report["runs"][0]["event"] == "unknown"
     assert report["runs"][0]["title"] == "CI"
+    assert report["runs"][0]["workflow_name"] is None
     assert collect_recent_runs_strict_failures(inspections) == [
         "run 102 (Nightly): stale-artifact: artifact expired"
     ]
 
 
-def test_recent_runs_json_report_groups_runs_by_workflow_title():
+def test_recent_runs_json_report_groups_runs_by_workflow_name_when_available():
     inspections = [
         RecentRunInspection(
             run_id=101,
             run_number=11,
             run_attempt=1,
-            title="CI",
+            title="feat: add branch filter",
             status="completed",
             conclusion="success",
             html_url="https://github.com/example/project/actions/runs/101",
@@ -2455,12 +2458,13 @@ def test_recent_runs_json_report_groups_runs_by_workflow_title():
             direct_file_artifacts=0,
             unknown_artifacts=0,
             strict_failures=[],
+            workflow_name="CI",
         ),
         RecentRunInspection(
             run_id=102,
             run_number=12,
             run_attempt=1,
-            title="CI",
+            title="fix: stabilize probe fallback",
             status="completed",
             conclusion="failure",
             html_url="https://github.com/example/project/actions/runs/102",
@@ -2471,12 +2475,13 @@ def test_recent_runs_json_report_groups_runs_by_workflow_title():
             direct_file_artifacts=1,
             unknown_artifacts=1,
             strict_failures=["stale-artifact: artifact expired"],
+            workflow_name="CI",
         ),
         RecentRunInspection(
             run_id=103,
             run_number=13,
             run_attempt=1,
-            title="Nightly",
+            title="nightly cleanup",
             status="completed",
             conclusion="success",
             html_url="https://github.com/example/project/actions/runs/103",
@@ -2487,6 +2492,7 @@ def test_recent_runs_json_report_groups_runs_by_workflow_title():
             direct_file_artifacts=2,
             unknown_artifacts=0,
             strict_failures=[],
+            workflow_name="Nightly",
         ),
     ]
 
