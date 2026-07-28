@@ -172,6 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only keep artifacts whose inferred archive kind matches this value. Applies to single-run inspection and --recent-runs summaries.",
     )
     parser.add_argument(
+        "--artifact-content-type",
+        help="Only keep artifacts whose content_type contains this case-insensitive text. Applies to single-run inspection and --recent-runs summaries.",
+    )
+    parser.add_argument(
         "--download-strategy",
         choices=("download-and-unzip", "download-as-is", "manual-check", "unavailable"),
         help="Only keep artifacts whose recommended consumption action matches this value. Applies to single-run inspection and --recent-runs summaries.",
@@ -554,6 +558,16 @@ def artifact_kind_matches_filter(archive_kind: str, artifact_kind_filter: str | 
     return archive_kind.lower() == artifact_kind_filter.lower()
 
 
+def artifact_content_type_matches_filter(
+    content_type: str | None, artifact_content_type_filter: str | None
+) -> bool:
+    if not artifact_content_type_filter:
+        return True
+    if not content_type:
+        return False
+    return artifact_content_type_filter.lower() in content_type.lower()
+
+
 def download_strategy_matches_filter(download_strategy: str, download_strategy_filter: str | None) -> bool:
     if not download_strategy_filter:
         return True
@@ -592,6 +606,7 @@ def filter_summaries(
     *,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
+    artifact_content_type_filter: str | None = None,
     download_strategy_filter: str | None = None,
     artifact_min_bytes: int | None = None,
     artifact_max_bytes: int | None = None,
@@ -602,6 +617,7 @@ def filter_summaries(
         for summary in summaries
         if artifact_name_matches_filter(summary.name, artifact_name_filter)
         and artifact_kind_matches_filter(summary.archive_kind, artifact_kind_filter)
+        and artifact_content_type_matches_filter(summary.content_type, artifact_content_type_filter)
         and download_strategy_matches_filter(summary.download_strategy, download_strategy_filter)
         and artifact_size_matches_filter(summary.size_in_bytes, artifact_min_bytes, artifact_max_bytes)
         and artifact_expired_matches_filter(summary.expired, artifact_expired_filter)
@@ -743,12 +759,18 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
         source_label = f"GitHub Actions run `{repo}` / `{run_id}`"
     artifact_name_filter = getattr(args, "artifact_name", None)
     artifact_kind_filter = getattr(args, "artifact_kind", None)
+    artifact_content_type_filter = getattr(args, "artifact_content_type", None)
     download_strategy_filter = getattr(args, "download_strategy", None)
     artifact_min_bytes = getattr(args, "artifact_min_bytes", None)
     artifact_max_bytes = getattr(args, "artifact_max_bytes", None)
     artifact_expired_filter = getattr(args, "artifact_expired", None)
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
+    artifact_content_type_suffix = (
+        f"; artifact content_type contains '{artifact_content_type_filter}'"
+        if artifact_content_type_filter
+        else ""
+    )
     download_strategy_suffix = (
         f"; download strategy = '{download_strategy_filter}'" if download_strategy_filter else ""
     )
@@ -764,7 +786,8 @@ def build_report_context(args: argparse.Namespace, payload: dict[str, Any], summ
 
     return ReportContext(
         source_label=(
-            f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}"
+            f"{source_label}{artifact_name_suffix}{artifact_kind_suffix}{artifact_content_type_suffix}"
+            f"{download_strategy_suffix}"
             f"{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}"
         ),
         total_artifacts=len(summaries),
@@ -793,6 +816,7 @@ def inspect_recent_runs(
     created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
+    artifact_content_type_filter: str | None = None,
     download_strategy_filter: str | None = None,
     artifact_min_bytes: int | None = None,
     artifact_max_bytes: int | None = None,
@@ -824,6 +848,7 @@ def inspect_recent_runs(
             summaries,
             artifact_name_filter=artifact_name_filter,
             artifact_kind_filter=artifact_kind_filter,
+            artifact_content_type_filter=artifact_content_type_filter,
             download_strategy_filter=download_strategy_filter,
             artifact_min_bytes=artifact_min_bytes,
             artifact_max_bytes=artifact_max_bytes,
@@ -886,6 +911,7 @@ def build_recent_runs_context(
     created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
     artifact_kind_filter: str | None = None,
+    artifact_content_type_filter: str | None = None,
     download_strategy_filter: str | None = None,
     artifact_min_bytes: int | None = None,
     artifact_max_bytes: int | None = None,
@@ -912,6 +938,11 @@ def build_recent_runs_context(
     )
     artifact_name_suffix = f"; artifact name contains '{artifact_name_filter}'" if artifact_name_filter else ""
     artifact_kind_suffix = f"; artifact kind = '{artifact_kind_filter}'" if artifact_kind_filter else ""
+    artifact_content_type_suffix = (
+        f"; artifact content_type contains '{artifact_content_type_filter}'"
+        if artifact_content_type_filter
+        else ""
+    )
     download_strategy_suffix = (
         f"; download strategy = '{download_strategy_filter}'" if download_strategy_filter else ""
     )
@@ -927,7 +958,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{artifact_content_type_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1356,6 +1387,7 @@ def main(argv: list[str] | None = None) -> int:
             created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
+            artifact_content_type_filter=args.artifact_content_type,
             download_strategy_filter=args.download_strategy,
             artifact_min_bytes=args.artifact_min_bytes,
             artifact_max_bytes=args.artifact_max_bytes,
@@ -1386,6 +1418,7 @@ def main(argv: list[str] | None = None) -> int:
             created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
             artifact_kind_filter=args.artifact_kind,
+            artifact_content_type_filter=args.artifact_content_type,
             download_strategy_filter=args.download_strategy,
             artifact_min_bytes=args.artifact_min_bytes,
             artifact_max_bytes=args.artifact_max_bytes,
@@ -1420,6 +1453,7 @@ def main(argv: list[str] | None = None) -> int:
         summaries,
         artifact_name_filter=args.artifact_name,
         artifact_kind_filter=args.artifact_kind,
+        artifact_content_type_filter=args.artifact_content_type,
         download_strategy_filter=args.download_strategy,
         artifact_min_bytes=args.artifact_min_bytes,
         artifact_max_bytes=args.artifact_max_bytes,

@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from gh_artifact_inspector.cli import (
     actor_matches_filter,
+    artifact_content_type_matches_filter,
     artifact_expired_matches_filter,
     artifact_name_matches_filter,
     artifact_size_matches_filter,
@@ -917,6 +918,13 @@ def test_artifact_expired_matches_filter_supports_yes_and_no():
     assert not artifact_expired_matches_filter(True, "no")
 
 
+def test_artifact_content_type_matches_filter_uses_case_insensitive_substring():
+    assert artifact_content_type_matches_filter("application/json", "JSON")
+    assert artifact_content_type_matches_filter("text/plain; charset=utf-8", "plain")
+    assert not artifact_content_type_matches_filter(None, "json")
+    assert not artifact_content_type_matches_filter("application/zip", "json")
+
+
 def test_filter_summaries_by_artifact_name_keeps_only_matching_rows():
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     summaries = summarize_payload(payload, headers={}, probe_download=False)
@@ -1014,6 +1022,31 @@ def test_cli_emits_kind_filtered_json_from_fixture():
     assert [item["name"] for item in payload] == ["coverage-summary.json"]
 
 
+def test_cli_emits_content_type_filtered_json_from_fixture():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gh_artifact_inspector.cli",
+            "--from-file",
+            str(FIXTURE),
+            "--artifact-content-type",
+            "json",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+    payload = json.loads(completed.stdout)
+    assert [item["name"] for item in payload] == ["coverage-summary.json"]
+
+
 def test_cli_emits_download_strategy_filtered_json_from_fixture():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -1086,6 +1119,30 @@ def test_build_report_context_includes_artifact_size_suffixes():
 
     assert "artifact size >= 300 bytes" in context.source_label
     assert "artifact size <= 1024 bytes" in context.source_label
+
+
+def test_build_report_context_includes_artifact_content_type_suffix():
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    summaries = summarize_payload(payload, headers={}, probe_download=False)
+    filtered = filter_summaries(summaries, artifact_content_type_filter="json")
+    args = argparse.Namespace(
+        from_file=FIXTURE,
+        repo=None,
+        run_id=None,
+        run_url=None,
+        artifact_name=None,
+        artifact_kind=None,
+        artifact_content_type="json",
+        download_strategy=None,
+        artifact_min_bytes=None,
+        artifact_max_bytes=None,
+        artifact_expired=None,
+    )
+
+    context = build_report_context(args, payload, filtered)
+
+    assert "artifact content_type contains 'json'" in context.source_label
+    assert [summary.name for summary in filtered] == ["coverage-summary.json"]
 
 
 def test_build_report_context_includes_artifact_expired_suffix():
@@ -1470,6 +1527,78 @@ def test_inspect_recent_runs_filters_by_head_sha(monkeypatch: pytest.MonkeyPatch
     assert len(inspections) == 1
     assert inspections[0].run_id == 101
     assert inspections[0].head_sha == "44e5d386da9c78d59fab018b04fd433b7cfeabc4"
+
+
+def test_inspect_recent_runs_filters_by_artifact_content_type(monkeypatch: pytest.MonkeyPatch):
+    responses = {
+        "https://api.github.com/repos/example/project/actions/runs?per_page=1&page=1": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "run_number": 11,
+                    "run_attempt": 1,
+                    "display_title": "Coverage",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "html_url": "https://github.com/example/project/actions/runs/101",
+                    "created_at": "2026-07-14T08:00:00Z",
+                },
+                {
+                    "id": 102,
+                    "run_number": 12,
+                    "run_attempt": 1,
+                    "display_title": "Bundle",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "html_url": "https://github.com/example/project/actions/runs/102",
+                    "created_at": "2026-07-14T09:00:00Z",
+                },
+            ]
+        },
+        "https://api.github.com/repos/example/project/actions/runs/101/artifacts?per_page=100": {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "name": "coverage-summary.json",
+                    "size_in_bytes": 256,
+                    "expired": False,
+                    "archive_download_url": "https://example.invalid/artifacts/coverage-summary.json",
+                    "content_type": "application/json",
+                }
+            ],
+        },
+        "https://api.github.com/repos/example/project/actions/runs/102/artifacts?per_page=100": {
+            "total_count": 1,
+            "artifacts": [
+                {
+                    "name": "bundle.zip",
+                    "size_in_bytes": 1024,
+                    "expired": False,
+                    "archive_download_url": "https://api.github.com/repos/example/project/actions/artifacts/2/zip",
+                    "content_type": "application/zip",
+                }
+            ],
+        },
+    }
+
+    def fake_request_json(url: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]
+        return responses[url]
+
+    monkeypatch.setattr("gh_artifact_inspector.cli.request_json", fake_request_json)
+
+    inspections = inspect_recent_runs(
+        "example/project",
+        1,
+        headers={},
+        probe_download=False,
+        artifact_content_type_filter="json",
+    )
+
+    assert len(inspections) == 1
+    assert inspections[0].run_id == 101
+    assert inspections[0].direct_file_artifacts == 1
 
 
 def test_inspect_recent_runs_filters_by_event(monkeypatch: pytest.MonkeyPatch):
@@ -2988,6 +3117,41 @@ def test_recent_runs_markdown_report_mentions_artifact_kind_filter():
     report = format_recent_runs_markdown_report(context, inspections)
 
     assert "artifact kind = 'direct-file'" in report
+
+
+def test_recent_runs_markdown_report_mentions_artifact_content_type_filter():
+    inspections = [
+        RecentRunInspection(
+            run_id=102,
+            run_number=12,
+            run_attempt=1,
+            title="Nightly",
+            status="completed",
+            conclusion="success",
+            html_url="https://github.com/example/project/actions/runs/102",
+            created_at="2026-07-14T09:00:00Z",
+            total_artifacts=1,
+            expired_artifacts=0,
+            zip_artifacts=0,
+            direct_file_artifacts=1,
+            unknown_artifacts=0,
+            strict_failures=[],
+            actor="octocat",
+            event="push",
+        ),
+    ]
+
+    context = build_recent_runs_context(
+        "example/project",
+        5,
+        inspections,
+        scanned_runs=1,
+        artifact_content_type_filter="json",
+    )
+
+    report = format_recent_runs_markdown_report(context, inspections)
+
+    assert "artifact content_type contains 'json'" in report
 
 
 def test_recent_runs_markdown_report_mentions_download_strategy_filter():

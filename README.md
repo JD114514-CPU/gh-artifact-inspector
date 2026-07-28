@@ -34,6 +34,7 @@
 - 支持 `--recent-runs N --created-before 2026-07-20`，只看某个时间点之前的 runs，便于给回归窗口补上结束边界，或只复盘某次发布之前的 artifact 行为
 - 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
 - 支持 `--artifact-kind direct-file`，只看某一类包装判断结果，便于快速聚焦“直接消费”“先 unzip”或“仍需人工判断”的 artifact
+- 支持 `--artifact-content-type json`，按 `content_type` 做大小写不敏感匹配，便于只看 `application/json`、`text/plain` 或其他特定类型产物
 - 支持 `--download-strategy download-as-is`，直接按建议消费动作筛选 artifact，便于把“直接下载就能用”“必须先解压”或“仍需人工确认”的结果拆开看
 - 支持 `--artifact-min-bytes 1048576` / `--artifact-max-bytes 10485760`，按 artifact 体积筛选，便于把超小元数据文件、可疑空产物或超大归档拆开排查
 - 支持 `--artifact-expired yes` / `--artifact-expired no`，按 artifact 是否已过期筛选，便于只看需要重跑 workflow 的旧产物，或只保留仍可直接消费的结果
@@ -243,6 +244,15 @@ gh-artifact-inspector --from-file tests/fixtures/artifacts.json --artifact-kind 
 ```
 
 这里的 `--artifact-kind` 支持 `zip`、`direct-file` 和 `unknown`；在单次 run 和 `--recent-runs` 模式下，统计都会只基于命中的这一类 artifact 重新计算。
+
+如果你想直接按 artifact 的 `content_type` 聚焦 JSON、文本或其他具体类型：
+
+```bash
+gh-artifact-inspector --from-file tests/fixtures/artifacts.json --artifact-content-type json --markdown
+gh-artifact-inspector --repo owner/name --recent-runs 20 --artifact-content-type plain --artifacts-only --markdown-report --probe-download
+```
+
+这里的 `--artifact-content-type` 会按 artifact 的 `content_type` 做大小写不敏感的包含匹配；如果 GitHub API 原始 payload 没有带 `content_type`，可以配合 `--probe-download` 通过下载头探测补齐。
 
 如果你更关心“这个 artifact 到底该怎么消费”，而不是它被推断成哪一类包装：
 
