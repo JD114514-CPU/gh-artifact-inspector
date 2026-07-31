@@ -122,6 +122,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="When used with --recent-runs, only inspect workflow runs whose workflow name contains this case-insensitive text. Falls back to display title when the workflow name is missing.",
     )
     parser.add_argument(
+        "--title",
+        help="When used with --recent-runs, only inspect workflow runs whose display title contains this case-insensitive text.",
+    )
+    parser.add_argument(
         "--branch",
         help="When used with --recent-runs, only inspect workflow runs whose head branch matches this case-insensitive text.",
     )
@@ -253,6 +257,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--artifacts-only can only be used together with --recent-runs.")
     if args.workflow and args.recent_runs is None:
         raise SystemExit("--workflow can only be used together with --recent-runs.")
+    if getattr(args, "title", None) and args.recent_runs is None:
+        raise SystemExit("--title can only be used together with --recent-runs.")
     if getattr(args, "branch", None) and args.recent_runs is None:
         raise SystemExit("--branch can only be used together with --recent-runs.")
     if getattr(args, "head_sha", None) and args.recent_runs is None:
@@ -402,6 +408,13 @@ def workflow_matches_filter(run: dict[str, Any], workflow_filter: str | None) ->
         return needle in workflow_name.lower()
     display_title = str(run.get("display_title") or "")
     return needle in display_title.lower()
+
+
+def title_matches_filter(run: dict[str, Any], title_filter: str | None) -> bool:
+    if not title_filter:
+        return True
+    display_title = str(run.get("display_title") or "")
+    return title_filter.lower() in display_title.lower()
 
 
 def branch_matches_filter(run: dict[str, Any], branch_filter: str | None) -> bool:
@@ -634,6 +647,7 @@ def fetch_recent_runs(
     limit: int,
     headers: dict[str, str],
     workflow_filter: str | None = None,
+    title_filter: str | None = None,
     branch_filter: str | None = None,
     head_sha_filter: str | None = None,
     event_filter: str | None = None,
@@ -651,6 +665,7 @@ def fetch_recent_runs(
     while len(runs) < limit:
         needs_extra_pages = (
             workflow_filter
+            or title_filter
             or branch_filter
             or head_sha_filter
             or event_filter
@@ -672,6 +687,7 @@ def fetch_recent_runs(
             run
             for run in page_runs
             if workflow_matches_filter(run, workflow_filter)
+            and title_matches_filter(run, title_filter)
             and branch_matches_filter(run, branch_filter)
             and head_sha_matches_filter(run, head_sha_filter)
             and event_matches_filter(run, event_filter)
@@ -809,6 +825,7 @@ def inspect_recent_runs(
     headers: dict[str, str],
     probe_download: bool,
     workflow_filter: str | None = None,
+    title_filter: str | None = None,
     branch_filter: str | None = None,
     head_sha_filter: str | None = None,
     event_filter: str | None = None,
@@ -833,6 +850,7 @@ def inspect_recent_runs(
         recent_runs,
         headers,
         workflow_filter=workflow_filter,
+        title_filter=title_filter,
         branch_filter=branch_filter,
         head_sha_filter=head_sha_filter,
         event_filter=event_filter,
@@ -905,6 +923,7 @@ def build_recent_runs_context(
     strict_only: bool = False,
     artifacts_only: bool = False,
     workflow_filter: str | None = None,
+    title_filter: str | None = None,
     branch_filter: str | None = None,
     head_sha_filter: str | None = None,
     event_filter: str | None = None,
@@ -926,6 +945,7 @@ def build_recent_runs_context(
     suffix = "; strict failures only" if strict_only else ""
     artifacts_only_suffix = "; runs with matching artifacts only" if artifacts_only else ""
     workflow_suffix = f"; workflow contains '{workflow_filter}'" if workflow_filter else ""
+    title_suffix = f"; title contains '{title_filter}'" if title_filter else ""
     branch_suffix = f"; branch contains '{branch_filter}'" if branch_filter else ""
     head_sha_suffix = f"; head_sha contains '{head_sha_filter}'" if head_sha_filter else ""
     event_suffix = f"; event contains '{event_filter}'" if event_filter else ""
@@ -964,7 +984,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{artifact_content_type_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{title_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{artifact_content_type_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1382,6 +1402,7 @@ def main(argv: list[str] | None = None) -> int:
             headers=headers,
             probe_download=args.probe_download,
             workflow_filter=args.workflow,
+            title_filter=args.title,
             branch_filter=args.branch,
             head_sha_filter=args.head_sha,
             event_filter=args.event,
@@ -1413,6 +1434,7 @@ def main(argv: list[str] | None = None) -> int:
             strict_only=args.strict_only,
             artifacts_only=args.artifacts_only,
             workflow_filter=args.workflow,
+            title_filter=args.title,
             branch_filter=args.branch,
             head_sha_filter=args.head_sha,
             event_filter=args.event,

@@ -22,6 +22,7 @@
 - 支持 `--strict`，可在 CI / agent 流程里把“人工确认”升级成非零退出码
 - 支持 `--recent-runs N`，批量扫描最近 N 次 workflow run 的 artifact 风险概况
 - 支持 `--recent-runs N --workflow nightly`，只看某个 workflow 名称命中的最近 runs，避免多流水线仓库噪音
+- 支持 `--recent-runs N --title branch filter`，只看 workflow run 标题命中的最近 runs，便于从 commit subject、PR 标题或 release 标题直接回查 artifact
 - 支持 `--recent-runs N --branch main`，只看某一条分支上的最近 runs，便于区分主干、发布分支或长期维护分支
 - 支持 `--recent-runs N --head-sha abc123`，只看某个 commit 对应的 runs，便于把同一分支上的不同提交拆开排查
 - 支持 `--recent-runs N --event pull_request`，只看某一类触发事件的 runs，便于区分 `push` / `pull_request` / `schedule`
@@ -148,6 +149,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 10 --workflow nightly --ma
 ```
 
 这里的 `--workflow` 会优先按 GitHub Actions 的 workflow `name` 做大小写不敏感的包含匹配；只有 `name` 缺失时才回退到 run `display_title`。这更适合稳定地只看 `ci`、`Nightly`、`Release`、`Artifacts` 这类固定流水线，而不会被 commit 标题误命中。
+
+如果你是从 commit subject、PR 标题或 release 标题开始排查，而不是从 workflow 名称开始：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 20 --title "branch filter" --markdown-report
+```
+
+这里的 `--title` 会按 workflow run 的 `display_title` 做大小写不敏感的包含匹配，适合直接从 GitHub Actions 页面上看到的 run 标题反查 artifact，而不用先知道 workflow 名称或 commit SHA。
 
 如果同一个仓库同时维护 `main`、`release/*` 或长期支持分支，但你只想看其中一条分支：
 
