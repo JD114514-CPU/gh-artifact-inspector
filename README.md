@@ -31,6 +31,7 @@
 - 支持 `--recent-runs N --actor dependabot`，只看某个触发者的 runs，便于把 bot、维护者手动触发和普通开发提交拆开看
 - 支持 `--recent-runs N --attempt 2`，只看某一次 rerun attempt，便于把初次运行和手动重试分开排查
 - 支持 `--recent-runs N --run-number 128`，只看某一个 GitHub Actions run number，便于从网页或 issue 里给出的 run 编号直接回查 artifact
+- 支持 `--recent-runs N --pr-number 2212`，只看和某个 PR 直接关联的 runs，便于从 PR 页面反查对应 artifact
 - 支持 `--recent-runs N --created-after 2026-07-17`，只看某个时间点之后的 runs，便于把发布前后、某次修复之后或某一段回归窗口单独拉出来
 - 支持 `--recent-runs N --created-before 2026-07-20`，只看某个时间点之前的 runs，便于给回归窗口补上结束边界，或只复盘某次发布之前的 artifact 行为
 - 支持 `--artifact-name summary`，只看名字命中的 artifact，便于在单次 run 或最近多次 run 里聚焦某个目标产物
@@ -41,7 +42,7 @@
 - 支持 `--artifact-expired yes` / `--artifact-expired no`，按 artifact 是否已过期筛选，便于只看需要重跑 workflow 的旧产物，或只保留仍可直接消费的结果
 - 支持 `--recent-runs N --strict-only`，只保留真正有 artifact 风险的 runs，适合日报和 issue 跟进
 - 支持 `--recent-runs N --artifacts-only`，只保留仍然命中至少 1 个 artifact 的 runs，适合先做 artifact 级筛选，再把 0 命中噪音从报告里剔掉
-- `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式或哪次 rerun 最常出问题
+- `--recent-runs` 的终端表格、JSON / Markdown 报告会额外带上 run `head_sha`、关联 `PR` 编号、`event`、`actor` 和 `run_attempt`，并按 workflow 名称聚合，方便看哪条流水线、哪次提交、哪类触发方式、哪条 PR 或哪次 rerun 最常出问题
 - 能识别 `.tar.gz` / `.tgz` 一类“本身就是单文件归档”的 artifact，避免误导成自动 unzip
 - 对疑似 `direct-file` artifact 明确提示“不要自动 unzip”
 
@@ -237,6 +238,14 @@ gh-artifact-inspector --repo owner/name --recent-runs 50 --run-number 128 --mark
 ```
 
 这里的 `--run-number` 会按 workflow run 的 `run_number` 做精确整数匹配，适合从 GitHub Actions 页面上可见的编号直接回查对应 artifact，而不用先手动换算成 run id。
+
+如果你是从 PR 讨论或审查页面出发，想直接把那条 PR 关联的 runs 拉出来：
+
+```bash
+gh-artifact-inspector --repo owner/name --recent-runs 50 --pr-number 2212 --markdown-report
+```
+
+这里的 `--pr-number` 会按 workflow run payload 里的关联 PR 编号做精确整数匹配；终端表格、Markdown 表格和 JSON 报告也会把命中的 PR 编号带出来，适合从 PR 页面直接回查 artifact，而不用先转成 branch、SHA 或 title。
 
 如果你只想看最近多次 run 里某个特定名字的 artifact：
 

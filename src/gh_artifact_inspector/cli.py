@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -72,6 +72,7 @@ class RecentRunInspection:
     event: str = "unknown"
     head_sha: str | None = None
     workflow_name: str | None = None
+    pr_numbers: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -158,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--run-number",
         type=int,
         help="When used with --recent-runs, only inspect workflow runs whose run_number exactly matches this integer.",
+    )
+    parser.add_argument(
+        "--pr-number",
+        type=int,
+        help="When used with --recent-runs, only inspect workflow runs associated with this pull request number.",
     )
     parser.add_argument(
         "--created-after",
@@ -275,6 +281,8 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
         raise SystemExit("--attempt can only be used together with --recent-runs.")
     if getattr(args, "run_number", None) is not None and args.recent_runs is None:
         raise SystemExit("--run-number can only be used together with --recent-runs.")
+    if getattr(args, "pr_number", None) is not None and args.recent_runs is None:
+        raise SystemExit("--pr-number can only be used together with --recent-runs.")
     if getattr(args, "created_after", None) and args.recent_runs is None:
         raise SystemExit("--created-after can only be used together with --recent-runs.")
     if getattr(args, "created_before", None) and args.recent_runs is None:
@@ -293,8 +301,11 @@ def validate_argument_combinations(args: argparse.Namespace) -> None:
     artifact_min_bytes = getattr(args, "artifact_min_bytes", None)
     artifact_max_bytes = getattr(args, "artifact_max_bytes", None)
     run_number = getattr(args, "run_number", None)
+    pr_number = getattr(args, "pr_number", None)
     if run_number is not None and run_number < 1:
         raise SystemExit("--run-number must be at least 1.")
+    if pr_number is not None and pr_number < 1:
+        raise SystemExit("--pr-number must be at least 1.")
     if artifact_min_bytes is not None and artifact_min_bytes < 0:
         raise SystemExit("--artifact-min-bytes cannot be negative.")
     if artifact_max_bytes is not None and artifact_max_bytes < 0:
@@ -496,6 +507,29 @@ def run_number_matches_filter(run: dict[str, Any], run_number_filter: int | None
         return False
 
 
+def run_pull_request_numbers(run: dict[str, Any]) -> list[int]:
+    pull_requests = run.get("pull_requests")
+    if not isinstance(pull_requests, list):
+        return []
+    numbers: list[int] = []
+    for pull_request in pull_requests:
+        if not isinstance(pull_request, dict):
+            continue
+        number = pull_request.get("number")
+        try:
+            if number is not None:
+                numbers.append(int(number))
+        except (TypeError, ValueError):
+            continue
+    return numbers
+
+
+def pr_number_matches_filter(run: dict[str, Any], pr_number_filter: int | None) -> bool:
+    if pr_number_filter is None:
+        return True
+    return pr_number_filter in run_pull_request_numbers(run)
+
+
 def parse_datetime_filter(value: str, flag_name: str) -> datetime:
     normalized = value.strip()
     if not normalized:
@@ -658,6 +692,7 @@ def fetch_recent_runs(
     run_number_filter: int | None = None,
     created_after_filter: str | None = None,
     created_before_filter: str | None = None,
+    pr_number_filter: int | None = None,
 ) -> list[dict[str, Any]]:
     owner, repo_name = split_repo(repo)
     runs: list[dict[str, Any]] = []
@@ -674,6 +709,7 @@ def fetch_recent_runs(
             or actor_filter
             or attempt_filter is not None
             or run_number_filter is not None
+            or pr_number_filter is not None
             or created_after_filter
             or created_before_filter
         )
@@ -696,6 +732,7 @@ def fetch_recent_runs(
             and actor_matches_filter(run, actor_filter)
             and attempt_matches_filter(run, attempt_filter)
             and run_number_matches_filter(run, run_number_filter)
+            and pr_number_matches_filter(run, pr_number_filter)
             and created_at_matches_filter(run, created_after_filter, created_before_filter)
         )
         if len(page_runs) < per_page:
@@ -834,6 +871,7 @@ def inspect_recent_runs(
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
     run_number_filter: int | None = None,
+    pr_number_filter: int | None = None,
     created_after_filter: str | None = None,
     created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
@@ -859,6 +897,7 @@ def inspect_recent_runs(
         actor_filter=actor_filter,
         attempt_filter=attempt_filter,
         run_number_filter=run_number_filter,
+        pr_number_filter=pr_number_filter,
         created_after_filter=created_after_filter,
         created_before_filter=created_before_filter,
     ):
@@ -898,6 +937,7 @@ def inspect_recent_runs(
                 event=str(run.get("event") or "unknown"),
                 head_sha=str(run.get("head_sha")) if run.get("head_sha") is not None else None,
                 workflow_name=str(run.get("name")) if run.get("name") is not None else None,
+                pr_numbers=run_pull_request_numbers(run),
             )
         )
     return inspections
@@ -932,6 +972,7 @@ def build_recent_runs_context(
     actor_filter: str | None = None,
     attempt_filter: int | None = None,
     run_number_filter: int | None = None,
+    pr_number_filter: int | None = None,
     created_after_filter: str | None = None,
     created_before_filter: str | None = None,
     artifact_name_filter: str | None = None,
@@ -954,6 +995,7 @@ def build_recent_runs_context(
     actor_suffix = f"; actor contains '{actor_filter}'" if actor_filter else ""
     attempt_suffix = f"; attempt = {attempt_filter}" if attempt_filter is not None else ""
     run_number_suffix = f"; run_number = {run_number_filter}" if run_number_filter is not None else ""
+    pr_number_suffix = f"; pr_number = {pr_number_filter}" if pr_number_filter is not None else ""
     created_after_suffix = f"; created_at >= '{created_after_filter}'" if created_after_filter else ""
     created_before_suffix = (
         f"; created_at <= end of '{created_before_filter}'"
@@ -984,7 +1026,7 @@ def build_recent_runs_context(
     return RecentRunsContext(
         source_label=(
             f"recent GitHub Actions runs `{repo}` "
-            f"(limit {recent_runs}{workflow_suffix}{title_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{artifact_content_type_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
+            f"(limit {recent_runs}{workflow_suffix}{title_suffix}{branch_suffix}{head_sha_suffix}{event_suffix}{conclusion_suffix}{status_suffix}{actor_suffix}{attempt_suffix}{run_number_suffix}{pr_number_suffix}{created_after_suffix}{created_before_suffix}{artifact_name_suffix}{artifact_kind_suffix}{artifact_content_type_suffix}{download_strategy_suffix}{artifact_min_bytes_suffix}{artifact_max_bytes_suffix}{artifact_expired_suffix}{artifacts_only_suffix}{suffix})"
         ),
         scanned_runs=scanned_runs if scanned_runs is not None else len(inspections),
         total_runs=len(inspections),
@@ -1123,6 +1165,7 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
             "run_number",
             "run_attempt",
             "head_sha",
+            "prs",
             "status",
             "conclusion",
             "event",
@@ -1138,12 +1181,14 @@ def format_recent_runs_table(inspections: list[RecentRunInspection]) -> str:
     ]
     for inspection in inspections:
         display_head_sha = (inspection.head_sha or "-")[:12]
+        display_pr_numbers = ",".join(str(number) for number in inspection.pr_numbers) or "-"
         rows.append(
             [
                 str(inspection.run_id),
                 str(inspection.run_number or "-"),
                 str(inspection.run_attempt or "-"),
                 display_head_sha,
+                display_pr_numbers,
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
@@ -1175,6 +1220,7 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
             "run_number",
             "run_attempt",
             "head_sha",
+            "prs",
             "status",
             "conclusion",
             "event",
@@ -1190,12 +1236,14 @@ def format_recent_runs_markdown_table(inspections: list[RecentRunInspection]) ->
     ]
     for inspection in inspections:
         display_head_sha = (inspection.head_sha or "-")[:12]
+        display_pr_numbers = ",".join(str(number) for number in inspection.pr_numbers) or "-"
         rows.append(
             [
                 str(inspection.run_id),
                 str(inspection.run_number or "-"),
                 str(inspection.run_attempt or "-"),
                 display_head_sha,
+                display_pr_numbers,
                 inspection.status,
                 inspection.conclusion or "-",
                 inspection.event,
@@ -1411,6 +1459,7 @@ def main(argv: list[str] | None = None) -> int:
             actor_filter=args.actor,
             attempt_filter=args.attempt,
             run_number_filter=args.run_number,
+            pr_number_filter=args.pr_number,
             created_after_filter=args.created_after,
             created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
@@ -1443,6 +1492,7 @@ def main(argv: list[str] | None = None) -> int:
             actor_filter=args.actor,
             attempt_filter=args.attempt,
             run_number_filter=args.run_number,
+            pr_number_filter=args.pr_number,
             created_after_filter=args.created_after,
             created_before_filter=args.created_before,
             artifact_name_filter=args.artifact_name,
