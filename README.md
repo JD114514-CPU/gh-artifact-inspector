@@ -91,6 +91,14 @@ set GITHUB_TOKEN=your_token_here
 gh-artifact-inspector --repo owner/name --run-id 123456789 --probe-download --json
 ```
 
+如果不想先改当前 shell 环境，也可以直接用 CLI 参数传 token：
+
+```bash
+gh-artifact-inspector --repo owner/name --run-id 123456789 --github-token your_token_here --probe-download --json
+```
+
+这里的 `--github-token` 会优先读取你显式传入的 token；如果不传，CLI 才会回退到环境变量 `GITHUB_TOKEN`。
+
 如果要把结果直接贴进 issue、PR 或日报：
 
 ```bash
